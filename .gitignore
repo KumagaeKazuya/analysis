@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+yolo11_env/
+
+# ML/AI specific
+*.pt
+*.pth
+*.onnx
+models/weights/
+data/raw/
+data/processed/
+logs/
+outputs/
+runs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
