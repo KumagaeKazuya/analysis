@@ -1,0 +1,4 @@
+train: 'annotations/train.json'
+val: 'annotations/val.json'
+nc: 1
+names: ['person']
