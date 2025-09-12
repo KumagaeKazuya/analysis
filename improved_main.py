@@ -11,6 +11,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
+from reports.baseline_report_generator import BaselineReportGenerator
 import argparse
 
 # 自作モジュール
