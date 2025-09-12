@@ -1,0 +1,87 @@
+# 設定ファイル
+
+# 基本設定
+project_name: "yolo11_wide_angle_analysis"
+version: "1.0.0"
+
+# パス設定
+paths:
+  video_dir: "videos"
+  model_dir: "models"
+  output_dir: "outputs"
+
+# モデル設定
+models:
+  detection: "yolo11n.pt"
+  pose: "yolo11n-pose.pt"
+  tracking_config: "bytetrack.yaml"
+
+# 処理設定
+processing:
+  frame_sampling:
+    interval_sec: 2
+    max_frames: 1000  # メモリ制限対応
+
+  detection:
+    confidence_threshold: 0.3
+    iou_threshold: 0.5
+    classes: [0]  # person only
+
+  tracking:
+    track_thresh: 0.5
+    track_buffer: 30
+    match_thresh: 0.8
+
+# 評価設定
+evaluation:
+  metrics:
+    basic_metrics: true
+    spatial_metrics: true
+    temporal_metrics: true
+    quality_metrics: true
+    wide_angle_metrics: true
+
+  thresholds:
+    high_confidence: 0.7
+    low_confidence: 0.3
+    iou_overlap: 0.5
+    edge_region_ratio: 0.1
+
+# 実験設定
+experiments:
+  calibration:
+    type: "camera_calibration"
+    parameters:
+      enable_undistortion: true
+      calibration_file: "camera_params.json"
+
+  ensemble:
+    type: "model_ensemble"
+    parameters:
+      models: ["yolo11n.pt", "yolo11s.pt", "yolo11m.pt"]
+      voting_strategy: "confidence_weighted"
+
+  augmentation:
+    type: "data_augmentation"
+    parameters:
+      enable_tta: true  # Test Time Augmentation
+      tta_scales: [0.8, 1.0, 1.2]
+      tta_flips: [false, true]
+
+# 可視化設定
+visualization:
+  generate_plots: true
+  save_annotated_frames: true
+  create_summary_video: true
+
+  plot_settings:
+    dpi: 300
+    figure_size: [12, 8]
+    font_size: 12
+
+# ロギング設定
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file_handler: true
+  console_handler: true
