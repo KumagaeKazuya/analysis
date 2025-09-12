@@ -23,6 +23,7 @@ from utils.logger import setup_logger
 
 class ImprovedYOLOAnalyzer:
     def __init__(self, config_path="configs/default.yaml"):
+        # 設定ファイル読み込みと各種モジュール初期化
         self.config = Config(config_path)
         self.logger = setup_logger()
         self.evaluator = ComprehensiveEvaluator(self.config)
@@ -47,13 +48,20 @@ class ImprovedYOLOAnalyzer:
             Path(dir_path).mkdir(parents=True, exist_ok=True)
 
     def run_baseline_establishment(self):
-        """9/11-19: ベースライン確立"""
+        """
+        ベースライン確立処理
+        1. 動画ファイルを取得
+        2. 各動画ごとにフレーム抽出・検出・追跡・評価・可視化
+        3. 結果保存とレポート生成
+        """
         self.logger.info("🚀 ベースライン確立を開始")
 
+        # 実験名と出力ディレクトリ作成
         experiment_name = f"baseline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         output_dir = Path("outputs/baseline") / experiment_name
         output_dir.mkdir(exist_ok=True)
 
+        # 結果格納用辞書
         results = {
             "experiment_name": experiment_name,
             "timestamp": datetime.now().isoformat(),
@@ -61,16 +69,18 @@ class ImprovedYOLOAnalyzer:
             "videos": []
         }
 
-        # 動画ファイル処理
+        # 動画ファイル一覧取得
         video_files = list(Path(self.config.video_dir).glob("*.mp4"))
         if not video_files:
             self.logger.error(f"動画ファイルが見つかりません: {self.config.video_dir}")
             return None
 
+        # 各動画ごとに処理
         for video_path in video_files:
             self.logger.info(f"処理中: {video_path.name}")
 
             try:
+                # 単一動画のベースライン処理
                 video_result = self._process_single_video_baseline(video_path, output_dir)
                 results["videos"].append(video_result)
 
@@ -86,7 +96,13 @@ class ImprovedYOLOAnalyzer:
         return results
 
     def _process_single_video_baseline(self, video_path, output_dir):
-        """単一動画のベースライン処理"""
+        """
+        単一動画のベースライン処理
+        1. フレーム抽出
+        2. 検出・追跡
+        3. 評価
+        4. 可視化
+        """
         video_name = video_path.stem
 
         # 1. フレーム抽出
@@ -105,6 +121,7 @@ class ImprovedYOLOAnalyzer:
         vis_dir = output_dir / "visualizations" / video_name
         self.analyzer.create_visualizations(detection_results, vis_dir)
 
+        # 結果を辞書で返す
         return {
             "video_name": video_name,
             "video_path": str(video_path),
@@ -114,12 +131,19 @@ class ImprovedYOLOAnalyzer:
         }
 
     def run_improvement_experiment(self, experiment_type):
-        """9/20以降: 改善実験"""
+        """
+        改善実験処理
+        1. 実験設定読み込み
+        2. ベースラインとの比較実験
+        3. 改善効果分析
+        4. レポート生成
+        """
         self.logger.info(f"🔬 改善実験開始: {experiment_type}")
 
         # 実験設定読み込み
         exp_config = self.config.get_experiment_config(experiment_type)
 
+        # 実験名と出力ディレクトリ作成
         experiment_name = f"{experiment_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         output_dir = Path("outputs/experiments") / experiment_name
         output_dir.mkdir(exist_ok=True)
@@ -136,7 +160,10 @@ class ImprovedYOLOAnalyzer:
         return improvement_analysis
 
     def _run_comparison_experiment(self, exp_config, output_dir):
-        """ベースラインとの比較実験"""
+        """
+        ベースラインとの比較実験
+        実験タイプごとに処理を分岐
+        """
         # 実装例: カメラキャリブレーション適用版
         if exp_config["type"] == "calibration":
             return self._run_calibration_experiment(exp_config, output_dir)
@@ -156,6 +183,11 @@ class ImprovedYOLOAnalyzer:
         report_generator.generate_markdown_report(output_dir / "baseline_report.md")
 
 def main():
+    """
+    コマンドライン引数を受け取り、実行モードに応じて処理を分岐
+    --mode baseline: ベースライン確立
+    --mode experiment: 改善実験
+    """
     parser = argparse.ArgumentParser(description='YOLO11 広角カメラ分析システム')
     parser.add_argument('--mode', choices=['baseline', 'experiment'],
                     default='baseline', help='実行モード')
@@ -167,11 +199,14 @@ def main():
     args = parser.parse_args()
 
     try:
+        # メインクラス初期化
         analyzer = ImprovedYOLOAnalyzer(args.config)
 
+        # ベースライン確立モード
         if args.mode == 'baseline':
             results = analyzer.run_baseline_establishment()
 
+        # 改善実験モード
         elif args.mode == 'experiment':
             if not args.experiment_type:
                 print("実験モードでは --experiment-type が必要です")
