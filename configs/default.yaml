@@ -1,87 +1,87 @@
 # 設定ファイル
 
 # 基本設定
-project_name: "yolo11_wide_angle_analysis"
-version: "1.0.0"
+project_name: "yolo11_wide_angle_analysis"  # プロジェクト名
+version: "1.0.0"                           # バージョン
 
 # パス設定
 paths:
-  video_dir: "videos"
-  model_dir: "models"
-  output_dir: "outputs"
+  video_dir: "videos"      # 入力動画ディレクトリ
+  model_dir: "models"      # モデル格納ディレクトリ
+  output_dir: "outputs"    # 出力ディレクトリ
 
 # モデル設定
 models:
-  detection: "yolo11n.pt"
-  pose: "yolo11n-pose.pt"
-  tracking_config: "bytetrack.yaml"
+  detection: "yolo11n.pt"          # 検出モデルファイル
+  pose: "yolo11n-pose.pt"          # ポーズ推定モデルファイル
+  tracking_config: "bytetrack.yaml" # トラッキング設定ファイル
 
 # 処理設定
 processing:
   frame_sampling:
-    interval_sec: 2
-    max_frames: 1000  # メモリ制限対応
+    interval_sec: 2                # フレーム抽出間隔（秒）
+    max_frames: 1000               # 最大フレーム数（メモリ制限対応）
 
   detection:
-    confidence_threshold: 0.3
-    iou_threshold: 0.5
-    classes: [0]  # person only
+    confidence_threshold: 0.3      # 検出信頼度の閾値
+    iou_threshold: 0.5             # IoU（重なり度）閾値
+    classes: [0]                   # 検出対象クラス（0: person）
 
   tracking:
-    track_thresh: 0.5
-    track_buffer: 30
-    match_thresh: 0.8
+    track_thresh: 0.5              # トラッキング信頼度閾値
+    track_buffer: 30               # トラッキングバッファサイズ
+    match_thresh: 0.8              # トラッキング一致閾値
 
 # 評価設定
 evaluation:
   metrics:
-    basic_metrics: true
-    spatial_metrics: true
-    temporal_metrics: true
-    quality_metrics: true
-    wide_angle_metrics: true
+    basic_metrics: true            # 基本メトリクス評価
+    spatial_metrics: true          # 空間メトリクス評価
+    temporal_metrics: true         # 時系列メトリクス評価
+    quality_metrics: true          # 品質メトリクス評価
+    wide_angle_metrics: true       # 広角カメラ特有メトリクス評価
 
   thresholds:
-    high_confidence: 0.7
-    low_confidence: 0.3
-    iou_overlap: 0.5
-    edge_region_ratio: 0.1
+    high_confidence: 0.7           # 高信頼度の閾値
+    low_confidence: 0.3            # 低信頼度の閾値
+    iou_overlap: 0.5               # IoU重なり閾値
+    edge_region_ratio: 0.1         # 画像端領域の割合（例: 10%）
 
 # 実験設定
 experiments:
   calibration:
-    type: "camera_calibration"
+    type: "camera_calibration"     # 実験タイプ：カメラキャリブレーション
     parameters:
-      enable_undistortion: true
-      calibration_file: "camera_params.json"
+      enable_undistortion: true    # 歪み補正を有効化
+      calibration_file: "camera_params.json" # 歪み係数等のパラメータファイル
 
   ensemble:
-    type: "model_ensemble"
+    type: "model_ensemble"         # 実験タイプ：モデルアンサンブル
     parameters:
-      models: ["yolo11n.pt", "yolo11s.pt", "yolo11m.pt"]
-      voting_strategy: "confidence_weighted"
+      models: ["yolo11n.pt", "yolo11s.pt", "yolo11m.pt"] # 使用するモデル一覧
+      voting_strategy: "confidence_weighted"             # 投票方式
 
   augmentation:
-    type: "data_augmentation"
+    type: "data_augmentation"      # 実験タイプ：データ拡張
     parameters:
-      enable_tta: true  # Test Time Augmentation
-      tta_scales: [0.8, 1.0, 1.2]
-      tta_flips: [false, true]
+      enable_tta: true             # Test Time Augmentation有効化
+      tta_scales: [0.8, 1.0, 1.2] # TTA用スケール
+      tta_flips: [false, true]     # TTA用フリップ
 
 # 可視化設定
 visualization:
-  generate_plots: true
-  save_annotated_frames: true
-  create_summary_video: true
+  generate_plots: true            # グラフ生成
+  save_annotated_frames: true     # アノテーション付きフレーム保存
+  create_summary_video: true      # サマリー動画生成
 
   plot_settings:
-    dpi: 300
-    figure_size: [12, 8]
-    font_size: 12
+    dpi: 300                      # グラフのDPI
+    figure_size: [12, 8]          # グラフサイズ
+    font_size: 12                 # フォントサイズ
 
 # ロギング設定
 logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file_handler: true
-  console_handler: true
+  level: "INFO"                   # ログレベル
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s" # ログフォーマット
+  file_handler: true              # ファイル出力有効
+  console_handler: true           # コンソール出力有効
