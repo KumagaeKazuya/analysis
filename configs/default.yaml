@@ -32,6 +32,23 @@ processing:
     track_buffer: 30               # トラッキングバッファサイズ
     match_thresh: 0.8              # トラッキング一致閾値
 
+# 🆕 新規追加: タイル推論設定
+  tile_inference:
+    enabled: false                    # タイル推論を有効化するかどうか
+    tile_size: [640, 640]            # タイルサイズ [width, height]
+    overlap_ratio: 0.2               # 重複率 (0.0-1.0)
+    max_tiles_per_frame: 16          # 1フレーム当たりの最大タイル数
+    use_adaptive: false              # 適応的タイル分割を使用
+    nms_threshold: 0.5               # NMS閾値
+
+    # パフォーマンス調整
+    memory_efficient_mode: true      # メモリ効率モード
+    batch_processing: false          # バッチ処理（現在未実装）
+
+    # 可視化設定
+    save_tile_boundaries: false      # タイル境界線の保存
+    save_comparison_images: true     # 比較画像の保存
+
 # 評価設定
 evaluation:
   metrics:
@@ -40,6 +57,7 @@ evaluation:
     temporal_metrics: true         # 時系列メトリクス評価
     quality_metrics: true          # 品質メトリクス評価
     wide_angle_metrics: true       # 広角カメラ特有メトリクス評価
+    tile_metrics: true              # タイル推論評価を有効化
 
   thresholds:
     high_confidence: 0.7           # 高信頼度の閾値
@@ -68,11 +86,27 @@ experiments:
       tta_scales: [0.8, 1.0, 1.2] # TTA用スケール
       tta_flips: [false, true]     # TTA用フリップ
 
+      # 🆕 新規追加: タイル推論実験
+  tile_comparison:
+    type: "tile_inference_comparison"
+    parameters:
+      compare_with_baseline: true   # ベースラインとの比較
+      sample_frames: 10            # 比較用サンプルフレーム数
+      tile_sizes: [[640, 640], [800, 800]]  # 比較するタイルサイズ
+      overlap_ratios: [0.1, 0.2, 0.3]       # 比較する重複率
+
 # 可視化設定
 visualization:
   generate_plots: true            # グラフ生成
   save_annotated_frames: true     # アノテーション付きフレーム保存
   create_summary_video: true      # サマリー動画生成
+
+  # 🆕 新規追加: タイル推論可視化
+  tile_visualization:
+    show_tile_boundaries: true     # タイル境界の表示
+    color_code_by_tile: true      # タイル別色分け
+    show_tile_statistics: true    # タイル統計表示
+    create_tile_heatmap: false    # タイル使用頻度ヒートマップ（初期値false）
 
   plot_settings:
     dpi: 300                      # グラフのDPI
