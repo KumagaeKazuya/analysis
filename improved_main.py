@@ -159,28 +159,84 @@ class ImprovedYOLOAnalyzer:
 
         return improvement_analysis
 
-    def _run_comparison_experiment(self, exp_config, output_dir):
-        """
-        ベースラインとの比較実験
-        実験タイプごとに処理を分岐
-        """
-        # 実装例: カメラキャリブレーション適用版
-        if exp_config["type"] == "calibration":
-            return self._run_calibration_experiment(exp_config, output_dir)
-        elif exp_config["type"] == "ensemble":
-            return self._run_ensemble_experiment(exp_config, output_dir)
-        # 他の実験タイプも同様に追加
+def _run_comparison_experiment(self, exp_config, output_dir):
+    """
+    ベースラインとの比較実験
+    実験タイプごとに処理を分岐
+    """
+    # 実験ランナーを動的インポート
+    try:
+        from experiments.experiment_runner import ExperimentRunner
+        experiment_runner = ExperimentRunner(self.config)
 
-    def _save_experiment_results(self, results, output_dir):
-        """実験結果の保存"""
-        with open(output_dir / "results.json", 'w') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
+        if exp_config["type"] == "camera_calibration":
+            return experiment_runner.run_calibration_experiment(exp_config, output_dir)
+        elif exp_config["type"] == "model_ensemble":
+            return experiment_runner.run_ensemble_experiment(exp_config, output_dir) 
+        elif exp_config["type"] == "data_augmentation":
+            return experiment_runner.run_augmentation_experiment(exp_config, output_dir)
+        elif exp_config["type"] == "tile_inference_comparison":
+            return experiment_runner.run_tile_comparison_experiment(exp_config, output_dir)
+        else:
+            return {"error": f"unknown_experiment_type: {exp_config['type']}", "success": False}
 
-    def _generate_baseline_report(self, results, output_dir):
-        """ベースラインレポート生成"""
-        report_generator = BaselineReportGenerator(results, self.config)
-        report_generator.generate_html_report(output_dir / "baseline_report.html")
-        report_generator.generate_markdown_report(output_dir / "baseline_report.md")
+    except ImportError as e:
+        self.logger.error(f"実験ランナーのインポートエラー: {e}")
+        return {"error": "experiment_runner_import_failed", "success": False}
+    except Exception as e:
+        self.logger.error(f"実験実行エラー: {e}")
+        return {"error": f"experiment_execution_failed: {e}", "success": False}
+
+def _generate_improvement_report(self, improvement_analysis, output_dir):
+    """改善実験レポート生成"""
+    try:
+        from reports.improvement_report_generator import ImprovementReportGenerator
+        report_generator = ImprovementReportGenerator(improvement_analysis, self.config)
+        report_generator.generate_html_report(output_dir / "improvement_report.html")
+        report_generator.generate_markdown_report(output_dir / "improvement_report.md")
+
+        self.logger.info(f"改善実験レポート生成完了: {output_dir}")
+
+    except ImportError:
+        # フォールバック: 簡易レポート生成
+        self.logger.warning("ImprovementReportGenerator が見つかりません。簡易レポートを生成します。")
+        self._generate_simple_improvement_report(improvement_analysis, output_dir)
+    except Exception as e:
+        self.logger.error(f"レポート生成エラー: {e}")
+
+def _generate_simple_improvement_report(self, improvement_analysis, output_dir):
+    """簡易改善レポート生成（フォールバック）"""
+    import json
+
+    # JSON形式でレポート保存
+    report_data = {
+        "generated_at": datetime.now().isoformat(),
+        "improvement_analysis": improvement_analysis
+    }
+
+    with open(output_dir / "improvement_report.json", 'w', encoding='utf-8') as f:
+        json.dump(report_data, f, indent=2, ensure_ascii=False)
+
+    # 簡易HTMLレポート
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>改善実験レポート</title>
+    </head>
+    <body>
+        <h1>改善実験レポート</h1>
+        <p>生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+        <pre>{json.dumps(improvement_analysis, indent=2, ensure_ascii=False)}</pre>
+    </body>
+    </html>
+    """
+
+    with open(output_dir / "improvement_report.html", 'w', encoding='utf-8') as f:
+        f.write(html_content)
+
+    self.logger.info("簡易改善レポート生成完了")
 
 def main():
     """
