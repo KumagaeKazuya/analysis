@@ -23,13 +23,13 @@ class Config:
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
-                
+
             if config is None:
                 print("設定ファイルが空です。デフォルト設定を使用します。")
                 return self._create_default_config()
-                
+
             return config
-            
+
         except yaml.YAMLError as e:
             print(f"YAML解析エラー: {e}")
             print("デフォルト設定を使用します。")
@@ -58,11 +58,11 @@ class Config:
     def get(self, key: str, default: Any = None) -> Any:
         """
         設定値を取得（ドット記法対応 + 型安全）
-        
+
         Args:
             key: 設定キー（例: "processing.detection.classes"）
             default: デフォルト値
-            
+
         Returns:
             設定値（型変換済み）
         """
@@ -78,6 +78,60 @@ class Config:
 
         # 型変換とバリデーション
         return self._convert_and_validate(key, value, default)
+
+def get_experiment_config(self, experiment_type: str) -> Dict[str, Any]:
+    """
+    実験タイプに応じた設定を返す
+    improved_main.py で使用される
+    """
+    # 設定ファイルから実験設定を取得
+    experiments_config = self.get('experiments', {})
+
+    if experiment_type in experiments_config:
+        return experiments_config[experiment_type]
+
+    # デフォルト実験設定
+    default_configs = {
+        "calibration": {
+            "type": "camera_calibration",
+            "parameters": {
+                "enable_undistortion": True,
+                "calibration_file": "configs/camera_params.json"
+            }
+        },
+
+        "ensemble": {
+            "type": "model_ensemble",
+            "parameters": {
+                "models": ["yolo11n.pt", "yolo11s.pt", "yolo11m.pt"],
+                "voting_strategy": "confidence_weighted"
+            }
+        },
+
+        "augmentation": {
+            "type": "data_augmentation",
+            "parameters": {
+                "enable_tta": True,
+                "tta_scales": [0.8, 1.0, 1.2],
+                "tta_flips": [False, True]
+            }
+        },
+
+        "tile_comparison": {
+            "type": "tile_inference_comparison",
+            "parameters": {
+                "compare_with_baseline": True,
+                "sample_frames": 10,
+                "tile_sizes": [[640, 640], [800, 800]],
+                "overlap_ratios": [0.1, 0.2, 0.3]
+            }
+        }
+    }
+
+    return default_configs.get(experiment_type, {
+        "type": experiment_type,
+        "parameters": {}
+    })
 
     def _convert_and_validate(self, key: str, value: Any, default: Any) -> Any:
         """
