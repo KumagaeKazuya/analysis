@@ -1028,13 +1028,15 @@ def analyze_frames_with_tracking_memory_efficient(
                             # 可視化（メモリ効率考慮）
                             if config.get("save_visualizations", False) and frame_detections > 0:
                                 try:
-                                    # 画像を読み込み、処理後即座に解放
                                     frame = cv2.imread(frame_path)
                                     if frame is not None:
                                         vis_frame = draw_detections_ultralytics(frame, results)
-                                        output_path = os.path.join(result_dir, frame_file)
+                                        # ✅ vis_プレフィックスを追加
+                                        vis_filename = f"vis_{frame_file}"
+                                        output_path = os.path.join(result_dir, vis_filename)
                                         cv2.imwrite(output_path, vis_frame)
-                                        del frame, vis_frame  # 明示的な削除
+                                        logger.debug(f"可視化保存: {output_path}")
+                                        del frame, vis_frame
                                 except Exception as vis_error:
                                     logger.warning(f"可視化エラー {frame_file}: {vis_error}")
 
