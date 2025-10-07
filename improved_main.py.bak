@@ -131,9 +131,6 @@ class ImprovedYOLOAnalyzer:
         }
 
     def run_improvement_experiment(self, experiment_type):
-        """改善実験処理（未実装）"""
-        pass
-
 
     def _save_experiment_results(self, results, output_dir):
         """実験結果をJSONファイルに保存"""

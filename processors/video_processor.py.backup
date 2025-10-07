@@ -11,7 +11,7 @@ class VideoProcessor:
         self.config = config
         self.logger = logging.getLogger(__name__)
 
-        # タイル推論が有効かチェック
+        # 🆕 タイル推論が有効かチェック
         self.tile_enabled = config.get('processing.tile_inference.enabled', False)
         if self.tile_enabled:
             self.logger.info("🔲 タイル推論モードで初期化")
@@ -19,20 +19,24 @@ class VideoProcessor:
             self.logger.info("📋 通常推論モードで初期化")
 
     def extract_frames(self, video_path: Path, output_dir: Path, **kwargs) -> Dict[str, Any]:
-        """動画からフレームを抽出"""
+        """
+        動画からフレームを抽出（既存コード）
+        循環インポートを避けるため、関数内で遅延インポート
+        """
         output_dir.mkdir(parents=True, exist_ok=True)
         interval_sec = kwargs.get('interval_sec', self.config.get('processing.frame_sampling.interval_sec', 2))
 
         try:
             self.logger.info(f"フレーム抽出開始: {video_path.name}")
 
-            # 既存の実装を使用
+            # 既存の実装をそのまま使用
             try:
                 from frame_sampler import sample_frames
-                sample_frames(str(video_path), str(output_dir), interval_sec=interval_sec)
             except ImportError:
                 self.logger.warning("frame_sampler モジュールが見つかりません。内蔵実装を使用します。")
                 self._sample_frames_builtin(str(video_path), str(output_dir), interval_sec)
+            else:
+                sample_frames(str(video_path), str(output_dir), interval_sec=interval_sec)
 
             frame_files = list(output_dir.glob("*.jpg"))
 
@@ -57,7 +61,7 @@ class VideoProcessor:
             }
 
     def _sample_frames_builtin(self, video_path: str, save_dir: str, interval_sec: int = 2):
-        """内蔵フレーム抽出実装"""
+        """既存の内蔵フレーム抽出実装（変更なし）"""
         os.makedirs(save_dir, exist_ok=True)
         cap = cv2.VideoCapture(video_path)
 
@@ -85,12 +89,15 @@ class VideoProcessor:
         self.logger.info(f"内蔵実装でフレーム抽出完了: {saved_count}フレーム")
 
     def run_detection_tracking(self, frame_dir: Path, video_name: str, **kwargs) -> Dict[str, Any]:
-        """検出・追跡処理を実行（タイル推論対応版）"""
+        """
+        検出・追跡処理を実行（タイル推論対応版）
+        既存メソッドを拡張
+        """
         try:
             self.logger.info(f"🔍 検出・追跡開始: {video_name}")
 
             # 結果出力ディレクトリ
-            result_dir = Path(self.config.output_dir) / video_name / "results"
+            result_dir = Path(self.config.output_dir) / "results" / video_name
             result_dir.mkdir(parents=True, exist_ok=True)
 
             # 処理設定を構築
@@ -117,11 +124,7 @@ class VideoProcessor:
             "confidence_threshold": self.config.get('processing.detection.confidence_threshold', 0.3),
             "tracking_config": self.config.get('models.tracking_config', 'bytetrack.yaml'),
             "save_visualizations": kwargs.get('save_visualizations', True),
-            "model_path": self.config.pose_model,
-            "device": self.config.get('processing.device', 'cpu'),
-            "batch_size": self.config.get('processing.batch_size', 8),
-            "max_memory_gb": self.config.get('processing.max_memory_gb', 3.0),
-            "streaming_output": self.config.get('processing.streaming_output', True)
+            "model_path": self.config.pose_model
         }
 
         # タイル推論設定を追加
@@ -141,6 +144,7 @@ class VideoProcessor:
     def _run_tile_inference(self, frame_dir: Path, result_dir: Path, video_name: str, config: Dict) -> Dict[str, Any]:
         """タイル推論実行"""
         try:
+            # 🔲 タイル推論関数を呼び出し
             from yolopose_analyzer import analyze_frames_with_tile_inference
 
             result = analyze_frames_with_tile_inference(
@@ -150,6 +154,7 @@ class VideoProcessor:
                 config
             )
 
+            # 成功時の追加情報
             if "error" not in result:
                 result.update({
                     "video_name": video_name,
@@ -157,11 +162,18 @@ class VideoProcessor:
                     "success": True
                 })
 
+                # タイル推論統計をログ出力
+                if "processing_stats" in result and "tile_stats" in result["processing_stats"]:
+                    tile_stats = result["processing_stats"]["tile_stats"]
+                    if tile_stats:
+                        self.logger.info(f"📊 タイル統計 - 平均タイル数/フレーム: {tile_stats.get('avg_tiles_per_frame', 0):.1f}")
+                        self.logger.info(f"📊 タイル統計 - NMS削減率: {tile_stats.get('avg_nms_reduction', 0):.1%}")
+
             return result
 
-        except ImportError as e:
-            self.logger.error(f"タイル推論関数のインポートエラー: {e}")
-            return {"error": f"tile_inference_import_failed: {e}", "success": False}
+        except ImportError:
+            self.logger.error("タイル推論関数が見つかりません")
+            return {"error": "tile_inference_function_not_found", "success": False}
         except Exception as e:
             self.logger.error(f"タイル推論エラー: {e}")
             return {"error": f"tile_inference_failed: {e}", "success": False}
@@ -169,10 +181,10 @@ class VideoProcessor:
     def _run_normal_inference(self, frame_dir: Path, result_dir: Path, video_name: str, config: Dict) -> Dict[str, Any]:
         """通常推論実行"""
         try:
-            # 正しい関数名を使用
-            from yolopose_analyzer import analyze_frames_with_tracking_memory_efficient
+            # 通常推論関数を呼び出し
+            from yolopose_analyzer import analyze_frames_with_tracking
 
-            result = analyze_frames_with_tracking_memory_efficient(
+            result = analyze_frames_with_tracking(
                 str(frame_dir),
                 str(result_dir),
                 model_path=config["model_path"],

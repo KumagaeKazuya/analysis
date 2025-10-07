@@ -125,16 +125,7 @@ def validate_model_file(model_path: str) -> Dict[str, Any]:
 
     # 読み込みテスト
     try:
-        # PyTorch 2.8対策: weights_onlyを強制的にFalseに
-        import torch
-        _original_torch_load = torch.load
-        torch.load = lambda *args, **kwargs: _original_torch_load(*args, **{**kwargs, 'weights_only': False})
-        
         test_model = YOLO(model_path)
-        
-        # 元に戻す
-        torch.load = _original_torch_load
-        
         validation_result["valid"] = True
         validation_result["warnings"].append("モデル検証完了")
     except Exception as e:
@@ -171,30 +162,9 @@ def safe_model_initialization(model_path: str, config: Dict[str, Any]) -> YOLO:
         for warning in validation["warnings"]:
             logger.info(warning)
 
-
-        # PyTorch 2.6以降のweights_only対策
-        import torch.serialization
-        try:
-            # Ultralyticsのクラスをsafe_globalsに追加
-            torch.serialization.add_safe_globals([
-                'ultralytics.nn.tasks.PoseModel',
-                'ultralytics.nn.tasks.DetectionModel'
-            ])
-        except AttributeError:
-            # 古いPyTorchバージョンでは無視
-            pass
-
     try:
-        # PyTorch 2.8対策: weights_onlyを強制的にFalseに
-        import torch
-        _original_torch_load = torch.load
-        torch.load = lambda *args, **kwargs: _original_torch_load(*args, **{**kwargs, 'weights_only': False})
-        
         # モデル初期化
         model = YOLO(model_path)
-        
-        # torch.loadを元に戻す
-        torch.load = _original_torch_load
 
         # デバイス設定
         device = config.get("device", "auto")

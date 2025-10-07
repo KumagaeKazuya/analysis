@@ -79,6 +79,60 @@ class Config:
         # 型変換とバリデーション
         return self._convert_and_validate(key, value, default)
 
+def get_experiment_config(self, experiment_type: str) -> Dict[str, Any]:
+    """
+    実験タイプに応じた設定を返す
+    improved_main.py で使用される
+    """
+    # 設定ファイルから実験設定を取得
+    experiments_config = self.get('experiments', {})
+
+    if experiment_type in experiments_config:
+        return experiments_config[experiment_type]
+
+    # デフォルト実験設定
+    default_configs = {
+        "calibration": {
+            "type": "camera_calibration",
+            "parameters": {
+                "enable_undistortion": True,
+                "calibration_file": "configs/camera_params.json"
+            }
+        },
+
+        "ensemble": {
+            "type": "model_ensemble",
+            "parameters": {
+                "models": ["yolo11n.pt", "yolo11s.pt", "yolo11m.pt"],
+                "voting_strategy": "confidence_weighted"
+            }
+        },
+
+        "augmentation": {
+            "type": "data_augmentation",
+            "parameters": {
+                "enable_tta": True,
+                "tta_scales": [0.8, 1.0, 1.2],
+                "tta_flips": [False, True]
+            }
+        },
+
+        "tile_comparison": {
+            "type": "tile_inference_comparison",
+            "parameters": {
+                "compare_with_baseline": True,
+                "sample_frames": 10,
+                "tile_sizes": [[640, 640], [800, 800]],
+                "overlap_ratios": [0.1, 0.2, 0.3]
+            }
+        }
+    }
+
+    return default_configs.get(experiment_type, {
+        "type": experiment_type,
+        "parameters": {}
+    })
+
     def _convert_and_validate(self, key: str, value: Any, default: Any) -> Any:
         """
         キー別の型変換とバリデーション
@@ -157,60 +211,6 @@ class Config:
             return bool(value)
         return default
 
-    def get_experiment_config(self, experiment_type: str) -> Dict[str, Any]:
-        """
-        実験タイプに応じた設定を返す
-        improved_main.py で使用される
-        """
-        # 設定ファイルから実験設定を取得
-        experiments_config = self.get('experiments', {})
-
-        if experiment_type in experiments_config:
-            return experiments_config[experiment_type]
-
-        # デフォルト実験設定
-        default_configs = {
-            "calibration": {
-                "type": "camera_calibration",
-                "parameters": {
-                    "enable_undistortion": True,
-                    "calibration_file": "configs/camera_params.json"
-                }
-            },
-
-            "ensemble": {
-                "type": "model_ensemble",
-                "parameters": {
-                    "models": ["yolo11n.pt", "yolo11s.pt", "yolo11m.pt"],
-                    "voting_strategy": "confidence_weighted"
-                }
-            },
-
-            "augmentation": {
-                "type": "data_augmentation",
-                "parameters": {
-                    "enable_tta": True,
-                    "tta_scales": [0.8, 1.0, 1.2],
-                    "tta_flips": [False, True]
-                }
-            },
-
-            "tile_comparison": {
-                "type": "tile_inference_comparison",
-                "parameters": {
-                    "compare_with_baseline": True,
-                    "sample_frames": 10,
-                    "tile_sizes": [[640, 640], [800, 800]],
-                    "overlap_ratios": [0.1, 0.2, 0.3]
-                }
-            }
-        }
-
-        return default_configs.get(experiment_type, {
-            "type": experiment_type,
-            "parameters": {}
-        })
-
     def _create_default_config(self) -> Dict[str, Any]:
         """デフォルト設定を作成（型を明示）"""
         default_config = {
@@ -227,32 +227,31 @@ class Config:
                 "tracking_config": "bytetrack.yaml"
             },
             "processing": {
-                "device": "cpu",
                 "frame_sampling": {
-                    "interval_sec": 2.0,
-                    "max_frames": 1000
+                    "interval_sec": 2.0,  # 明示的にfloat
+                    "max_frames": 1000    # 明示的にint
                 },
                 "detection": {
-                    "confidence_threshold": 0.3,
-                    "iou_threshold": 0.5,
-                    "classes": [0]
+                    "confidence_threshold": 0.3,  # float
+                    "iou_threshold": 0.5,         # float
+                    "classes": [0]                # list of int
                 },
                 "tracking": {
-                    "track_thresh": 0.5,
-                    "track_buffer": 30,
-                    "match_thresh": 0.8
+                    "track_thresh": 0.5,      # float
+                    "track_buffer": 30,       # int
+                    "match_thresh": 0.8       # float
                 }
             },
             "evaluation": {
                 "metrics": {
-                    "basic_metrics": True,
+                    "basic_metrics": True,        # bool
                     "spatial_metrics": True,
                     "temporal_metrics": True,
                     "quality_metrics": True,
                     "wide_angle_metrics": True
                 },
                 "thresholds": {
-                    "high_confidence": 0.7,
+                    "high_confidence": 0.7,       # float
                     "low_confidence": 0.3,
                     "iou_overlap": 0.5,
                     "edge_region_ratio": 0.1
@@ -309,7 +308,6 @@ class Config:
         print("=== 設定ファイル要約 ===")
         print(f"検出モデル: {self.detection_model}")
         print(f"ポーズモデル: {self.pose_model}")
-        print(f"デバイス: {self.get('processing.device', 'cpu')}")
         print(f"信頼度閾値: {self.confidence_threshold}")
         print(f"検出クラス: {self.detection_classes}")
         print(f"フレーム間隔: {self.get_float('processing.frame_sampling.interval_sec')}秒")
