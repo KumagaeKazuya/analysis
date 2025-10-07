@@ -70,7 +70,7 @@ evaluation:
 # 可視化設定（メモリ節約版）
 visualization:
   generate_plots: true
-  save_annotated_frames: false    # ⚠️ メモリ節約のため無効
+  save_annotated_frames: true    # ⚠️ メモリ節約のため無効
   create_summary_video: false     # ⚠️ メモリ節約のため無効
 
   tile_visualization:
