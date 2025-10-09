@@ -1,11 +1,21 @@
+"""
+動画処理モジュール (修正版)
+
+🔧 主な修正点:
+1. tracking_configのNone対策
+2. deviceのNone対策
+3. エラー時のスタックトレース出力
+"""
+
 import os
 import cv2
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+
 class VideoProcessor:
-    """動画処理を統括するクラス - パス修正版"""
+    """動画処理を統括するクラス - エラー修正版"""
 
     def __init__(self, config):
         self.config = config
@@ -19,7 +29,17 @@ class VideoProcessor:
             self.logger.info("📋 通常推論モードで初期化")
 
     def extract_frames(self, video_path: Path, output_dir: Path, **kwargs) -> Dict[str, Any]:
-        """動画からフレームを抽出"""
+        """
+        動画からフレームを抽出
+        
+        Args:
+            video_path: 動画ファイルのパス
+            output_dir: フレーム出力ディレクトリ
+            **kwargs: interval_sec などの追加設定
+            
+        Returns:
+            抽出結果の辞書
+        """
         output_dir.mkdir(parents=True, exist_ok=True)
         interval_sec = kwargs.get('interval_sec', self.config.get('processing.frame_sampling.interval_sec', 2))
 
@@ -57,7 +77,14 @@ class VideoProcessor:
             }
 
     def _sample_frames_builtin(self, video_path: str, save_dir: str, interval_sec: int = 2):
-        """内蔵フレーム抽出実装"""
+        """
+        内蔵フレーム抽出実装
+        
+        Args:
+            video_path: 動画ファイルパス
+            save_dir: 保存ディレクトリ
+            interval_sec: フレーム抽出間隔（秒）
+        """
         os.makedirs(save_dir, exist_ok=True)
         cap = cv2.VideoCapture(video_path)
 
@@ -85,13 +112,22 @@ class VideoProcessor:
         self.logger.info(f"内蔵実装でフレーム抽出完了: {saved_count}フレーム")
 
     def run_detection_tracking(self, frame_dir: Path, video_name: str, **kwargs) -> Dict[str, Any]:
-        """検出・追跡処理を実行（パス修正版）"""
+        """
+        検出・追跡処理を実行
+        
+        Args:
+            frame_dir: フレームディレクトリ
+            video_name: 動画名
+            **kwargs: 追加設定
+            
+        Returns:
+            処理結果の辞書
+        """
         try:
             self.logger.info(f"🔍 検出・追跡開始: {video_name}")
 
-            # ✅ 修正: 結果ディレクトリのパスを明確に指定
-            # frame_dir の親ディレクトリ（video_name）の下に results を作成
-            video_base_dir = frame_dir.parent  # .../test
+            # 結果ディレクトリのパスを明確に指定
+            video_base_dir = frame_dir.parent  # 例: .../test
             result_dir = video_base_dir / "results"
             result_dir.mkdir(parents=True, exist_ok=True)
 
@@ -106,7 +142,7 @@ class VideoProcessor:
             else:
                 result = self._run_normal_inference(frame_dir, result_dir, video_name, processing_config)
 
-            # ✅ 修正: CSVパスをログ出力
+            # CSVパスをログ出力
             if result.get("success") and result.get("csv_path"):
                 self.logger.info(f"✅ CSV保存完了: {result['csv_path']}")
 
@@ -124,19 +160,41 @@ class VideoProcessor:
             }
 
     def _build_processing_config(self, kwargs: Dict) -> Dict[str, Any]:
-        """処理設定の構築"""
+        """
+        処理設定の構築
+        
+        🔧 修正ポイント: None値を確実にフォールバック
+        
+        Args:
+            kwargs: 追加設定
+            
+        Returns:
+            完全な処理設定の辞書
+        """
+        # ===== 基本設定 =====
         config = {
+            # 検出設定
             "confidence_threshold": self.config.get('processing.detection.confidence_threshold', 0.3),
-            "tracking_config": self.config.get('models.tracking_config', 'bytetrack.yaml'),
+            
+            # 🔧 修正1: tracking_configがNoneの場合のフォールバック
+            "tracking_config": self.config.get('models.tracking_config') or 'bytetrack.yaml',
+            
+            # 可視化設定
             "save_visualizations": kwargs.get('save_visualizations', True),
+            
+            # モデルパス
             "model_path": self.config.pose_model,
-            "device": self.config.get('processing.device', 'cpu'),
+            
+            # 🔧 修正2: deviceがNoneの場合のフォールバック
+            "device": self.config.get('processing.device') or 'cpu',
+            
+            # メモリ・バッチ設定
             "batch_size": self.config.get('processing.batch_size', 8),
             "max_memory_gb": self.config.get('processing.max_memory_gb', 3.0),
             "streaming_output": self.config.get('processing.streaming_output', True)
         }
 
-        # タイル推論設定を追加
+        # ===== タイル推論設定を追加 =====
         if self.tile_enabled:
             tile_config = self.config.get('processing.tile_inference', {})
             config["tile_inference"] = {
@@ -151,7 +209,18 @@ class VideoProcessor:
         return config
 
     def _run_tile_inference(self, frame_dir: Path, result_dir: Path, video_name: str, config: Dict) -> Dict[str, Any]:
-        """タイル推論実行"""
+        """
+        タイル推論実行
+        
+        Args:
+            frame_dir: フレームディレクトリ
+            result_dir: 結果出力ディレクトリ
+            video_name: 動画名
+            config: 処理設定
+            
+        Returns:
+            処理結果の辞書
+        """
         try:
             from yolopose_analyzer import analyze_frames_with_tile_inference
 
@@ -174,12 +243,25 @@ class VideoProcessor:
         except ImportError as e:
             self.logger.error(f"タイル推論関数のインポートエラー: {e}")
             return {"error": f"tile_inference_import_failed: {e}", "success": False}
+        
         except Exception as e:
-            self.logger.error(f"タイル推論エラー: {e}")
+            # 🔧 修正3: 詳細なスタックトレースを出力
+            self.logger.error(f"タイル推論エラー: {e}", exc_info=True)
             return {"error": f"tile_inference_failed: {e}", "success": False}
 
     def _run_normal_inference(self, frame_dir: Path, result_dir: Path, video_name: str, config: Dict) -> Dict[str, Any]:
-        """通常推論実行"""
+        """
+        通常推論実行
+        
+        Args:
+            frame_dir: フレームディレクトリ
+            result_dir: 結果出力ディレクトリ
+            video_name: 動画名
+            config: 処理設定
+            
+        Returns:
+            処理結果の辞書
+        """
         try:
             from yolopose_analyzer import analyze_frames_with_tracking_memory_efficient
 
@@ -208,8 +290,10 @@ class VideoProcessor:
                 "success": False,
                 "suggestion": "yolopose_analyzer.py が存在することを確認してください"
             }
+        
         except Exception as e:
-            self.logger.error(f"通常推論エラー {video_name}: {e}")
+            # 🔧 修正4: 詳細なスタックトレースを出力（最重要！）
+            self.logger.error(f"通常推論エラー {video_name}: {e}", exc_info=True)
             return {
                 "video_name": video_name,
                 "frame_dir": str(frame_dir),
