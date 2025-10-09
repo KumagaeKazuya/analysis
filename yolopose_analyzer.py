@@ -71,13 +71,35 @@ def check_system_resources() -> Dict[str, Any]:
         except:
             disk = None
 
+        # ✅ GPU検出を改善（CUDA + MPS対応）
+        gpu_available = False
+        gpu_type = "none"
+        gpu_count = 0
+        gpu_name = "N/A"
+
+        # CUDA (NVIDIA GPU) チェック
+        if torch.cuda.is_available():
+            gpu_available = True
+            gpu_type = "cuda"
+            gpu_count = torch.cuda.device_count()
+            if gpu_count > 0:
+                gpu_name = torch.cuda.get_device_name(0)
+        # MPS (Apple Silicon GPU) チェック
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            gpu_available = True
+            gpu_type = "mps"
+            gpu_count = 1  # MPSは常に1デバイス
+            gpu_name = "Apple Silicon GPU (MPS)"
+
         result = {
             "memory_total_gb": memory.total / (1024**3),
             "memory_available_gb": memory.available / (1024**3),
             "memory_percent": memory.percent,
             "cpu_count": psutil.cpu_count(),
             "gpu_available": torch.cuda.is_available(),
-            "gpu_count": torch.cuda.device_count() if torch.cuda.is_available() else 0
+            "gpu_type": gpu_type,
+            "gpu_count": gpu_count,
+            "gpu_name": gpu_name
         }
 
         if disk:
@@ -129,12 +151,12 @@ def validate_model_file(model_path: str) -> Dict[str, Any]:
         import torch
         _original_torch_load = torch.load
         torch.load = lambda *args, **kwargs: _original_torch_load(*args, **{**kwargs, 'weights_only': False})
-        
+
         test_model = YOLO(model_path)
-        
+
         # 元に戻す
         torch.load = _original_torch_load
-        
+
         validation_result["valid"] = True
         validation_result["warnings"].append("モデル検証完了")
     except Exception as e:
@@ -155,10 +177,22 @@ def safe_model_initialization(model_path: str, config: Dict[str, Any]) -> YOLO:
         if resources["memory_available_gb"] < 2.0:
             logger.warning("利用可能メモリが2GB未満です。処理が遅くなる可能性があります。")
 
+        # ✅ GPU情報の出力を改善
         if resources["gpu_available"]:
-            logger.info(f"GPU利用可能: {resources['gpu_count']}個のデバイス")
+            gpu_type = resources.get("gpu_type", "unknown")
+            gpu_name = resources.get("gpu_name", "N/A")
+            gpu_count = resources.get("gpu_count", 0)
+
+            if gpu_type == "mps":
+                logger.info(f"🍎 Apple Silicon GPU (MPS) 利用可能")
+            elif gpu_type == "cuda":
+                logger.info(f"🚀 NVIDIA GPU (CUDA) 利用可能: {gpu_count}個のデバイス")
+                if gpu_name != "N/A":
+                    logger.info(f"   GPU名: {gpu_name}")
+            else:
+                logger.info(f"GPU利用可能: {gpu_type.upper()}")
         else:
-            logger.info("GPU利用不可。CPUで処理します。")
+            logger.info("💻 GPU利用不可。CPUで処理します。")
 
     # モデルファイル検証
     validation = validate_model_file(model_path)
@@ -189,17 +223,24 @@ def safe_model_initialization(model_path: str, config: Dict[str, Any]) -> YOLO:
         import torch
         _original_torch_load = torch.load
         torch.load = lambda *args, **kwargs: _original_torch_load(*args, **{**kwargs, 'weights_only': False})
-        
+
         # モデル初期化
         model = YOLO(model_path)
-        
+
         # torch.loadを元に戻す
         torch.load = _original_torch_load
 
-        # デバイス設定
+        # ✅ デバイス設定を改善
         device = config.get("device", "auto")
+        
         if device == "auto":
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            # 自動検出
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
 
         try:
             model.to(device)
@@ -208,7 +249,13 @@ def safe_model_initialization(model_path: str, config: Dict[str, Any]) -> YOLO:
             device = "cpu"
             model.to(device)
 
-        logger.info(f"モデル初期化完了: {model_path} on {device}")
+        # ✅ デバイス情報の出力を改善
+        if device == "mps":
+            logger.info(f"モデル初期化完了: {model_path} on 🍎 {device.upper()}")
+        elif device == "cuda":
+            logger.info(f"モデル初期化完了: {model_path} on 🚀 {device.upper()}")
+        else:
+            logger.info(f"モデル初期化完了: {model_path} on 💻 {device.upper()}")
 
         # GPU使用時の追加設定
         if device == "cuda" and torch.cuda.is_available():
