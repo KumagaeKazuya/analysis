@@ -1,5 +1,11 @@
 """
-メイン分析関数モジュール（完全版）
+メイン分析関数モジュール (修正版・完全版)
+
+🔧 主な修正点:
+1. tracker設定の安全性チェック追加
+2. 全エラーハンドリングにスタックトレース出力追加
+3. メモリ効率的なバッチ処理
+
 元の yolopose_analyzer.py から完全に移植
 """
 
@@ -28,10 +34,9 @@ def analyze_frames_with_tracking_memory_efficient(
     config: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
-    メモリ効率を考慮したフレーム解析（完全実装版）
+    メモリ効率を考慮したフレーム解析（修正版）
     
-    元の yolopose_analyzer.py の同名関数から完全移植。
-    バッチ処理、メモリ管理、ストリーミング出力、可視化を含む。
+    バッチ処理、メモリ管理、ストリーミング出力、可視化を含む完全実装。
     
     Args:
         frame_dir: フレームディレクトリ
@@ -40,10 +45,15 @@ def analyze_frames_with_tracking_memory_efficient(
         config: 処理設定
         
     Returns:
-        処理結果の辞書
+        処理結果の辞書 {
+            "csv_path": str,
+            "processing_stats": dict,
+            "success": bool,
+            ...
+        }
     """
     
-    # デフォルト設定
+    # ===== デフォルト設定 =====
     if config is None:
         config = {
             "confidence_threshold": 0.3,
@@ -59,10 +69,10 @@ def analyze_frames_with_tracking_memory_efficient(
     processor = MemoryEfficientProcessor(config)
 
     try:
-        # モデル初期化（エラーハンドリング強化版）
+        # ===== モデル初期化 =====
         model = safe_model_initialization(model_path, config)
         
-        # フレームディレクトリ検証
+        # ===== フレームディレクトリ検証 =====
         frame_validation = validate_frame_directory(frame_dir)
         if not frame_validation["valid"]:
             return {
@@ -81,10 +91,10 @@ def analyze_frames_with_tracking_memory_efficient(
         total_frames = len(frame_files)
         logger.info(f"処理対象: {total_frames}フレーム ({frame_validation['total_size_mb']:.1f}MB)")
 
-        # ストリーミング出力用のCSVファイルを開く
+        # ===== ストリーミング出力用CSV準備 =====
         csv_path = os.path.join(result_dir, "detections_streaming.csv")
 
-        # 処理統計
+        # ===== 処理統計の初期化 =====
         stats = {
             "total_frames": total_frames,
             "processed_frames": 0,
@@ -96,14 +106,16 @@ def analyze_frames_with_tracking_memory_efficient(
             "batch_times": []
         }
 
-        # バッチ処理でメモリ効率化
+        # ===== バッチサイズの設定 =====
         batch_size = config.get("batch_size", 32)
 
+        # ===== メイン処理ループ =====
         with open(csv_path, 'w', newline='', encoding='utf-8') as csv_file:
             csv_writer = csv.writer(csv_file)
             csv_writer.writerow(["frame", "person_id", "x1", "y1", "x2", "y2", "conf", "class_name"])
 
             try:
+                # ----- バッチごとに処理 -----
                 for batch_start in range(0, total_frames, batch_size):
                     batch_end = min(batch_start + batch_size, total_frames)
                     batch_files = frame_files[batch_start:batch_end]
@@ -114,7 +126,7 @@ def analyze_frames_with_tracking_memory_efficient(
                     logger.info(f"バッチ処理 {batch_start//batch_size + 1}/{(total_frames-1)//batch_size + 1}: "
                               f"{len(batch_files)}フレーム")
 
-                    # バッチ内のフレーム処理
+                    # ----- バッチ内のフレーム処理 -----
                     for frame_file in batch_files:
                         frame_path = os.path.join(frame_dir, frame_file)
 
@@ -124,16 +136,26 @@ def analyze_frames_with_tracking_memory_efficient(
                                 logger.warning("メモリ使用量が閾値を超過。クリーンアップを実行...")
                                 processor.force_memory_cleanup()
 
+                            # ═══════════════════════════════════════
+                            # 🔧 修正5: tracker設定の安全性チェック
+                            # ═══════════════════════════════════════
+                            tracker_config = config.get("tracking_config")
+                            
+                            # Noneチェック
+                            if tracker_config is None or not tracker_config:
+                                tracker_config = "bytetrack.yaml"
+                                logger.debug(f"tracker設定が空だったためデフォルト値を使用: {tracker_config}")
+
                             # 推論実行
                             results = model.track(
                                 frame_path,
                                 persist=True,
-                                tracker=config.get("tracking_config", "bytetrack.yaml"),
+                                tracker=tracker_config,  # ← 確実に文字列が入る
                                 conf=config.get("confidence_threshold", 0.3),
                                 verbose=False
                             )
 
-                            # 結果処理
+                            # ----- 結果処理 -----
                             frame_detections = 0
                             for r in results:
                                 if r.boxes is not None:
@@ -161,7 +183,7 @@ def analyze_frames_with_tracking_memory_efficient(
                             stats["total_detections"] += frame_detections
                             stats["successful_frames"] += 1
 
-                            # 可視化（メモリ効率考慮）
+                            # ----- 可視化（メモリ効率考慮） -----
                             if config.get("save_visualizations", False) and frame_detections > 0:
                                 try:
                                     frame = cv2.imread(frame_path)
@@ -180,42 +202,48 @@ def analyze_frames_with_tracking_memory_efficient(
                             del results
 
                         except Exception as frame_error:
-                            logger.error(f"フレーム処理エラー {frame_file}: {frame_error}")
+                            # 🔧 修正6: フレームエラーの詳細出力
+                            logger.error(
+                                f"フレーム処理エラー {frame_file}: {frame_error}", 
+                                exc_info=True  # ← スタックトレース出力
+                            )
                             stats["failed_frames"] += 1
                             continue
 
                         stats["processed_frames"] += 1
 
-                    # バッチの検出結果をCSVに書き込み（ストリーミング）
+                    # ----- バッチの検出結果をCSVに書き込み -----
                     if batch_detections:
                         csv_writer.writerows(batch_detections)
                         csv_file.flush()  # 即座にディスクに書き込み
 
-                    # バッチ処理完了後のクリーンアップ
+                    # ----- バッチ処理完了後のクリーンアップ -----
                     del batch_detections
                     processor.force_memory_cleanup()
 
-                    # 統計更新
+                    # ----- 統計更新 -----
                     batch_time = time.time() - batch_start_time
                     current_memory = processor.get_memory_usage()
                     stats["batch_times"].append(batch_time)
                     stats["memory_peaks"].append(current_memory)
 
-                    # 進捗報告
+                    # ----- 進捗報告 -----
                     progress = (batch_end / total_frames) * 100
                     logger.info(f"進捗: {progress:.1f}% (メモリ: {current_memory:.2f}GB, "
                             f"バッチ時間: {batch_time:.1f}s)")
 
             except Exception as e:
-                logger.error(f"バッチ処理エラー: {e}")
+                # 🔧 修正7: バッチ処理エラーの詳細出力
+                logger.error(f"バッチ処理エラー: {e}", exc_info=True)
                 return {"error": f"batch_processing_failed: {e}", "success": False}
 
-        # 最終統計の計算
+        # ===== 最終統計の計算 =====
         stats["unique_ids"] = len(stats["unique_ids"])
         stats["success_rate"] = stats["successful_frames"] / total_frames if total_frames > 0 else 0
         stats["avg_batch_time"] = np.mean(stats["batch_times"]) if stats["batch_times"] else 0
         stats["peak_memory_gb"] = max(stats["memory_peaks"]) if stats["memory_peaks"] else 0
 
+        # ===== 結果サマリーのログ出力 =====
         logger.info(f"✅ 処理完了統計:")
         logger.info(f"  成功率: {stats['success_rate']:.1%}")
         logger.info(f"  総検出数: {stats['total_detections']}")
@@ -242,8 +270,8 @@ def analyze_frames_with_tracking_memory_efficient(
         return {"error": "resource_exhaustion", "details": str(e), "success": False}
 
     except Exception as e:
-        logger.error(f"予期しないエラー: {e}")
-        logger.error(f"詳細", exc_info=True)
+        # 🔧 修正8: 予期しないエラーの詳細出力
+        logger.error(f"予期しないエラー: {e}", exc_info=True)
         return {"error": "unexpected_error", "details": str(e), "success": False}
 
 
