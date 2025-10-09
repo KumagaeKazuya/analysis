@@ -3,10 +3,32 @@
 import yaml
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, TypeVar, Generic
+
+T = TypeVar('T')
+
+class ConfigValue(Generic[T]):
+    """設定値のラッパークラス（型安全性向上）"""
+
+    def __init__(self, value: T, key: str):
+        self._value = value
+        self._key = key
+
+    @property
+    def value(self) -> T:
+        return self._value
+
+    def __repr__(self) -> str:
+        return f"ConfigValue({self._key}={self._value})"
 
 class Config:
     """設定管理クラス - 型安全版"""
+
+    # デフォルト設定の定数化
+    DEFAULT_CONFIDENCE_THRESHOLD = 0.3
+    DEFAULT_IOU_THRESHOLD = 0.5
+    DEFAULT_FRAME_INTERVAL = 2.0
+    DEFAULT_DETECTION_CLASSES = [0]  # person
 
     def __init__(self, config_path: str = "configs/default.yaml"):
         self.config_path = config_path
@@ -80,54 +102,64 @@ class Config:
         return self._convert_and_validate(key, value, default)
 
     def _convert_and_validate(self, key: str, value: Any, default: Any) -> Any:
-        """
-        キー別の型変換とバリデーション
-        """
+        """キー別の型変換とバリデーション"""
         # classes の特別処理（文字列→リスト変換）
         if key.endswith('.classes'):
-            if isinstance(value, str):
-                # "0,1,2" -> [0, 1, 2] の変換
-                try:
-                    value = [int(x.strip()) for x in value.split(',') if x.strip()]
-                except ValueError:
-                    print(f"警告: {key} の文字列をリストに変換できません: {value}")
-                    return default if default is not None else [0]
-            elif isinstance(value, (int, float)):
-                # 単一値をリストに変換
-                value = [int(value)]
-            elif isinstance(value, list):
-                # リスト内の要素を整数に変換
-                try:
-                    value = [int(x) for x in value]
-                except ValueError:
-                    print(f"警告: {key} のリスト要素を整数に変換できません: {value}")
-                    return default if default is not None else [0]
+            return self._convert_classes(value, default, key)  # keyを渡してログ改善
 
-        # confidence/iou threshold の範囲チェック
-        elif 'threshold' in key.lower():
-            if isinstance(value, (int, float)):
-                value = float(value)
-                if not 0 <= value <= 1:
-                    print(f"警告: {key} が範囲外です（0-1）: {value}")
-                    value = max(0, min(1, value))  # クランプ
+        # threshold の範囲チェック
+        if 'threshold' in key.lower():
+            return self._convert_threshold(value, default, key)
 
         # interval_sec の正数チェック
-        elif key.endswith('interval_sec'):
-            if isinstance(value, (int, float)):
-                value = float(value)
-                if value <= 0:
-                    print(f"警告: {key} は正数である必要があります: {value}")
-                    value = 2.0  # デフォルト値
+        if key.endswith('interval_sec'):
+            return self._convert_interval(value, default, key)
 
         return value
 
-    def get_list(self, key: str, default: List = None) -> List:
+    def _convert_classes(self, value: Any, default: Any, key: str = "") -> List[int]:
+        """classes設定値の変換"""
+        if isinstance(value, str):
+            try:
+                return [int(x.strip()) for x in value.split(',') if x.strip()]
+            except ValueError:
+                print(f"警告: {key} の文字列をリストに変換できません: {value}")
+                return default if default is not None else self.DEFAULT_DETECTION_CLASSES
+        elif isinstance(value, (int, float)):
+            return [int(value)]
+        elif isinstance(value, list):
+            try:
+                return [int(x) for x in value]
+            except ValueError:
+                print(f"警告: {key} のリスト要素を整数に変換できません: {value}")
+                return default if default is not None else self.DEFAULT_DETECTION_CLASSES
+        return default if default is not None else self.DEFAULT_DETECTION_CLASSES
+
+    def _convert_threshold(self, value: Any, default: Any, key: str = "") -> float:
+        """threshold設定値の変換"""
+        if isinstance(value, (int, float)):
+            value = float(value)
+            if not 0 <= value <= 1:
+                print(f"警告: {key} が範囲外です（0-1）: {value}")
+                value = max(0, min(1, value))  # クランプ
+            return value
+        return default if default is not None else self.DEFAULT_CONFIDENCE_THRESHOLD
+
+    def _convert_interval(self, value: Any, default: Any, key: str = "") -> float:
+        """interval設定値の変換"""
+        if isinstance(value, (int, float)):
+            value = float(value)
+            if value <= 0:
+                print(f"警告: {key} は正数である必要があります: {value}")
+                return default if default is not None else self.DEFAULT_FRAME_INTERVAL
+            return value
+        return default if default is not None else self.DEFAULT_FRAME_INTERVAL
+
+    def get_list(self, key: str, default: Optional[List] = None) -> List:
         """リスト型の設定値を安全に取得"""
         value = self.get(key, default)
         if not isinstance(value, list):
-            if default is not None:
-                return default
-            return []
+            return default if default is not None else []
         return value
 
     def get_float(self, key: str, default: float = 0.0) -> float:
@@ -227,20 +259,32 @@ class Config:
                 "tracking_config": "bytetrack.yaml"
             },
             "processing": {
-                "device": "cpu",
+                "device": "auto",  # cpu/mps/cuda 自動選択
+                "batch_size": 8,
+                "max_memory_gb": 3.0,
+                "streaming_output": True,
                 "frame_sampling": {
-                    "interval_sec": 2.0,
+                    "interval_sec": self.DEFAULT_FRAME_INTERVAL,
                     "max_frames": 1000
                 },
                 "detection": {
-                    "confidence_threshold": 0.3,
-                    "iou_threshold": 0.5,
-                    "classes": [0]
+                    "confidence_threshold": self.DEFAULT_CONFIDENCE_THRESHOLD,
+                    "iou_threshold": self.DEFAULT_IOU_THRESHOLD,
+                    "classes": self.DEFAULT_DETECTION_CLASSES
                 },
                 "tracking": {
                     "track_thresh": 0.5,
                     "track_buffer": 30,
                     "match_thresh": 0.8
+                },
+                "tile_inference": {
+                    "enabled": False,
+                    "tile_size": [640, 640],
+                    "overlap_ratio": 0.2,
+                    "max_tiles_per_frame": 16,
+                    "use_adaptive": False,
+                    "nms_threshold": 0.5,
+                    "memory_efficient_mode": True
                 }
             },
             "evaluation": {
@@ -249,13 +293,33 @@ class Config:
                     "spatial_metrics": True,
                     "temporal_metrics": True,
                     "quality_metrics": True,
-                    "wide_angle_metrics": True
+                    "wide_angle_metrics": True,
+                    "tile_metrics": True  # 追加
                 },
                 "thresholds": {
                     "high_confidence": 0.7,
                     "low_confidence": 0.3,
                     "iou_overlap": 0.5,
                     "edge_region_ratio": 0.1
+                }
+            },
+            "visualization": {
+                "generate_plots": True,
+                "save_annotated_frames": False,  # メモリ節約
+                "create_summary_video": False,   # メモリ節約
+                "plot_settings": {
+                    "dpi": 300,
+                    "figure_size": [12, 8],
+                    "font_size": 12
+                }
+            },
+            "experiments": {
+                "calibration": {
+                    "type": "camera_calibration",
+                    "parameters": {
+                        "enable_undistortion": True,
+                        "calibration_file": "configs/camera_params.json"
+                        }
                 }
             }
         }
