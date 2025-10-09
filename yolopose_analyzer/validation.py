@@ -1,5 +1,6 @@
 """
 検証機能モジュール
+元の yolopose_analyzer.py から抽出
 """
 
 import os
@@ -13,7 +14,15 @@ logger = logging.getLogger(__name__)
 
 
 def validate_model_file(model_path: str) -> Dict[str, Any]:
-    """モデルファイルの詳細検証"""
+    """
+    モデルファイルの詳細検証
+    
+    Args:
+        model_path: YOLOモデルファイルのパス
+        
+    Returns:
+        検証結果の辞書
+    """
     validation_result = {
         "valid": False,
         "errors": [],
@@ -21,28 +30,36 @@ def validate_model_file(model_path: str) -> Dict[str, Any]:
         "suggestions": []
     }
 
+    # ファイル存在確認
     if not os.path.exists(model_path):
         validation_result["errors"].append(f"モデルファイルが存在しません: {model_path}")
         
         model_name = os.path.basename(model_path)
         if model_name.startswith("yolo11"):
             validation_result["suggestions"].append(
-                f"モデルダウンロード方法:\n"
-                f"python -c \"from ultralytics import YOLO; YOLO('{model_name}')\""
+                f"以下の方法でモデルをダウンロードできます:\n"
+                f"1. コマンド: python -c \"from ultralytics import YOLO; YOLO('{model_name}')\"\n"
+                f"2. または公式サイトからダウンロード"
             )
         return validation_result
 
+    # ファイルサイズ確認
     try:
         file_size = os.path.getsize(model_path)
-        if file_size < 1024:
-            validation_result["errors"].append(f"ファイルサイズ異常: {file_size} bytes")
+        if file_size < 1024:  # 1KB未満は異常
+            validation_result["errors"].append(
+                f"モデルファイルのサイズが異常に小さいです: {file_size} bytes"
+            )
             return validation_result
-        elif file_size < 1024*1024:
-            validation_result["warnings"].append(f"ファイルサイズ小: {file_size/1024:.1f} KB")
+        elif file_size < 1024*1024:  # 1MB未満は警告
+            validation_result["warnings"].append(
+                f"モデルファイルが小さすぎる可能性があります: {file_size/1024:.1f} KB"
+            )
     except Exception as e:
         validation_result["errors"].append(f"ファイルサイズ確認エラー: {e}")
         return validation_result
 
+    # 読み込みテスト
     try:
         import torch
         _original = torch.load
@@ -54,14 +71,24 @@ def validate_model_file(model_path: str) -> Dict[str, Any]:
         validation_result["valid"] = True
         validation_result["warnings"].append("モデル検証完了")
     except Exception as e:
-        validation_result["errors"].append(f"モデル読み込みエラー: {e}")
-        validation_result["suggestions"].append("モデルファイルが破損している可能性があります")
+        validation_result["errors"].append(f"モデル読み込みテストエラー: {e}")
+        validation_result["suggestions"].append(
+            "モデルファイルが破損している可能性があります。再ダウンロードを試してください。"
+        )
 
     return validation_result
 
 
 def validate_frame_directory(frame_dir: str) -> Dict[str, Any]:
-    """フレームディレクトリの検証"""
+    """
+    フレームディレクトリの検証
+    
+    Args:
+        frame_dir: フレームディレクトリのパス
+        
+    Returns:
+        検証結果の辞書
+    """
     validation_result = {
         "valid": False,
         "frame_count": 0,
@@ -100,12 +127,14 @@ def validate_frame_directory(frame_dir: str) -> Dict[str, Any]:
                 size = os.path.getsize(file_path)
                 total_size += size
 
+                # OpenCVで読み込みテスト
                 img = cv2.imread(file_path)
                 if img is None:
                     corrupted_files.append(frame_file)
             except Exception as e:
                 corrupted_files.append(f"{frame_file} ({e})")
 
+        # 全体サイズ推定
         if sample_size > 0:
             avg_size = total_size / sample_size
             estimated_total_mb = (avg_size * len(frame_files)) / (1024*1024)
@@ -114,7 +143,7 @@ def validate_frame_directory(frame_dir: str) -> Dict[str, Any]:
         if corrupted_files:
             validation_result["warnings"].append(f"破損ファイル: {corrupted_files[:3]}")
 
-        if validation_result["total_size_mb"] > 1000:
+        if validation_result["total_size_mb"] > 1000:  # 1GB以上
             validation_result["warnings"].append(
                 f"大量のフレーム ({validation_result['total_size_mb']:.1f}MB)"
             )
