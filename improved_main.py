@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 import argparse
+from typing import Dict, Any, Optional
 
 # 自作モジュール
 from evaluators.comprehensive_evaluator import ComprehensiveEvaluator
@@ -94,7 +95,9 @@ class ImprovedYOLOAnalyzer:
         self.logger.info("✅ ベースライン確立完了")
         return results
 
-    def _process_single_video_baseline(self, video_path, output_dir):
+    def _process_single_video_baseline(self,
+                                    video_path: Path,
+                                    output_dir: Path) -> Dict[str, Any]:
         """
         単一動画のベースライン処理
         1. フレーム抽出
@@ -229,18 +232,20 @@ class ImprovedYOLOAnalyzer:
         except Exception as e:
             self.logger.error(f"レポート生成エラー: {e}")
 
-    def _generate_simple_baseline_report(self, results, reports_dir):
+    def _generate_simple_baseline_report(self,
+                                        results: Dict[str, Any],
+                                        reports_dir: Path) -> None:
         """簡易ベースラインレポート生成"""
         try:
-            report_data = {
-                "generated_at": datetime.now().isoformat(),
-                "experiment_name": results.get("experiment_name", "baseline"),
-                "results": results
-            }
-
+            # JSON形式で保存
             with open(reports_dir / "baseline_report.json", 'w', encoding='utf-8') as f:
-                json.dump(report_data, f, indent=2, ensure_ascii=False)
+                json.dump({
+                    "generated_at": datetime.now().isoformat(),
+                    "experiment_name": results.get("experiment_name", "baseline"),
+                    "results": results
+                }, f, indent=2, ensure_ascii=False)
 
+            # 簡易HTML生成
             html_content = f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -268,7 +273,9 @@ class ImprovedYOLOAnalyzer:
         except Exception as e:
             self.logger.error(f"簡易レポート生成エラー: {e}")
 
-    def _run_comparison_experiment(self, exp_config, output_dir):
+    def _run_comparison_experiment(self,
+                                exp_config: Dict[str, Any],
+                                output_dir: Path) -> Dict[str, Any]:
         """
         ベースラインとの比較実験
         実験タイプごとに処理を分岐
@@ -277,16 +284,18 @@ class ImprovedYOLOAnalyzer:
             from experiments.experiment_runner import ExperimentRunner
             experiment_runner = ExperimentRunner(self.config)
 
-            if exp_config["type"] == "camera_calibration":
+            experiment_type = exp_config["type"]
+
+            if experiment_type == "camera_calibration":
                 return experiment_runner.run_calibration_experiment(exp_config, output_dir)
-            elif exp_config["type"] == "model_ensemble":
+            elif experiment_type == "model_ensemble":
                 return experiment_runner.run_ensemble_experiment(exp_config, output_dir)
-            elif exp_config["type"] == "data_augmentation":
+            elif experiment_type == "data_augmentation":
                 return experiment_runner.run_augmentation_experiment(exp_config, output_dir)
-            elif exp_config["type"] == "tile_inference_comparison":
+            elif experiment_type == "tile_inference_comparison":
                 return experiment_runner.run_tile_comparison_experiment(exp_config, output_dir)
             else:
-                return {"error": f"unknown_experiment_type: {exp_config['type']}", "success": False}
+                return {"error": f"unknown_experiment_type: {experiment_type}", "success": False}
 
         except ImportError as e:
             self.logger.error(f"実験ランナーのインポートエラー: {e}")
@@ -295,7 +304,9 @@ class ImprovedYOLOAnalyzer:
             self.logger.error(f"実験実行エラー: {e}")
             return {"error": f"experiment_execution_failed: {e}", "success": False}
 
-    def _generate_improvement_report(self, improvement_analysis, output_dir):
+    def _generate_improvement_report(self, 
+                                    improvement_analysis: Dict[str, Any], 
+                                    output_dir: Path) -> None:
         """改善実験レポート生成"""
         try:
             from reports.improvement_report_generator import ImprovementReportGenerator
@@ -311,35 +322,45 @@ class ImprovedYOLOAnalyzer:
         except Exception as e:
             self.logger.error(f"レポート生成エラー: {e}")
 
-    def _generate_simple_improvement_report(self, improvement_analysis, output_dir):
+    def _generate_simple_improvement_report(self,
+                                    improvement_analysis: Dict[str, Any],
+                                    output_dir: Path) -> None:
         """簡易改善レポート生成（フォールバック）"""
-        report_data = {
-            "generated_at": datetime.now().isoformat(),
-            "improvement_analysis": improvement_analysis
-        }
+        try:
+            # JSON保存
+            with open(output_dir / "improvement_report.json", 'w', encoding='utf-8') as f:
+                json.dump({
+                    "generated_at": datetime.now().isoformat(),
+                    "improvement_analysis": improvement_analysis
+                }, f, indent=2, ensure_ascii=False)
 
-        with open(output_dir / "improvement_report.json", 'w', encoding='utf-8') as f:
-            json.dump(report_data, f, indent=2, ensure_ascii=False)
+            # 簡易HTML生成
+            html_content = f"""<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>改善実験レポート</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; }}
+        h1 {{ color: #333; }}
+        pre {{ background: #f4f4f4; padding: 15px; border-radius: 5px; }}
+    </style>
+</head>
+<body>
+    <h1>改善実験レポート</h1>
+    <p>生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+    <h2>改善分析結果</h2>
+    <pre>{json.dumps(improvement_analysis, indent=2, ensure_ascii=False)}</pre>
+</body>
+</html>"""
 
-        html_content = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <title>改善実験レポート</title>
-        </head>
-        <body>
-            <h1>改善実験レポート</h1>
-            <p>生成日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
-            <pre>{json.dumps(improvement_analysis, indent=2, ensure_ascii=False)}</pre>
-        </body>
-        </html>
-        """
+            with open(output_dir / "improvement_report.html", 'w', encoding='utf-8') as f:
+                f.write(html_content)
 
-        with open(output_dir / "improvement_report.html", 'w', encoding='utf-8') as f:
-            f.write(html_content)
+            self.logger.info("簡易改善レポート生成完了")
 
-        self.logger.info("簡易改善レポート生成完了")
+        except Exception as e:
+            self.logger.error(f"簡易改善レポート生成エラー: {e}")
 
 
 def main():
