@@ -161,8 +161,11 @@ class ImprovedYOLOAnalyzer:
                     details=detection_results
                 )
 
+            # ✅ 修正: ResponseBuilder形式に対応したCSVパス取得
+            result_data = detection_results.get("data", {})
+            csv_path = result_data.get("csv_path")
+
             # 4. 評価
-            csv_path = detection_results.get("csv_path")
             if not csv_path or not Path(csv_path).exists():
                 self.logger.warning(f"CSVファイル未生成: {csv_path}")
                 metrics = ResponseBuilder.error(
@@ -184,6 +187,9 @@ class ImprovedYOLOAnalyzer:
                 self.analyzer.create_visualizations(detection_results, vis_dir)
             except Exception as e:
                 self.logger.warning(f"可視化エラー: {e}")
+
+            # ✅ 修正: 統計情報も data から取得
+            processing_stats = result_data.get("processing_stats", {})
 
             return {
                 "video_name": video_name,
