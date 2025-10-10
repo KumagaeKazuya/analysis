@@ -1,6 +1,5 @@
 """
-検証機能モジュール
-元の yolopose_analyzer.py から抽出
+検証機能モジュール（統一エラーハンドリング対応版）
 """
 
 import os
@@ -10,147 +9,222 @@ from pathlib import Path
 from typing import Dict, Any
 from ultralytics import YOLO
 
+# 🔧 統一エラーハンドラーからインポート
+from utils.error_handler import (
+    ValidationError,
+    ResponseBuilder,
+    handle_errors,
+    validate_inputs,
+    ErrorContext,
+    ErrorCategory
+)
+
 logger = logging.getLogger(__name__)
 
 
+@validate_inputs(model_path=lambda x: isinstance(x, str) and len(x) > 0)
+@handle_errors(logger=logger, error_category=ErrorCategory.VALIDATION)
 def validate_model_file(model_path: str) -> Dict[str, Any]:
     """
-    モデルファイルの詳細検証
-    
+    モデルファイルの詳細検証（統一エラーハンドリング対応版）
+
     Args:
         model_path: YOLOモデルファイルのパス
-        
+
     Returns:
-        検証結果の辞書
+        ResponseBuilder形式の検証結果
     """
-    validation_result = {
-        "valid": False,
-        "errors": [],
-        "warnings": [],
-        "suggestions": []
-    }
+    with ErrorContext("モデルファイル検証", logger=logger) as ctx:
+        ctx.add_info("model_path", model_path)
 
-    # ファイル存在確認
-    if not os.path.exists(model_path):
-        validation_result["errors"].append(f"モデルファイルが存在しません: {model_path}")
-        
-        model_name = os.path.basename(model_path)
-        if model_name.startswith("yolo11"):
-            validation_result["suggestions"].append(
-                f"以下の方法でモデルをダウンロードできます:\n"
-                f"1. コマンド: python -c \"from ultralytics import YOLO; YOLO('{model_name}')\"\n"
-                f"2. または公式サイトからダウンロード"
+        # ファイル存在確認
+        if not os.path.exists(model_path):
+            # ダウンロード提案を含める
+            model_name = os.path.basename(model_path)
+            suggestion = ""
+            if model_name.startswith("yolo11"):
+                suggestion = f"以下でダウンロード可能: python -c \"from ultralytics import YOLO; YOLO('{model_name}')\""
+
+            return ResponseBuilder.validation_error(
+                field="model_path",
+                message=f"モデルファイルが存在しません: {model_path}",
+                value=model_path,
+                details={"suggestion": suggestion} if suggestion else None
             )
-        return validation_result
 
-    # ファイルサイズ確認
-    try:
+        # ファイルサイズ確認
         file_size = os.path.getsize(model_path)
-        if file_size < 1024:  # 1KB未満は異常
-            validation_result["errors"].append(
-                f"モデルファイルのサイズが異常に小さいです: {file_size} bytes"
+        ctx.add_info("file_size_bytes", file_size)
+
+        if file_size < 1024:  # 1KB未満
+            return ResponseBuilder.validation_error(
+                field="model_file_size",
+                message=f"モデルファイルのサイズが異常に小さいです: {file_size} bytes",
+                value=file_size,
+                details={"suggestion": "モデルファイルが破損している可能性があります"}
             )
-            return validation_result
-        elif file_size < 1024*1024:  # 1MB未満は警告
-            validation_result["warnings"].append(
-                f"モデルファイルが小さすぎる可能性があります: {file_size/1024:.1f} KB"
+
+        if file_size < 1024*1024:  # 1MB未満は警告
+            logger.warning(f"モデルファイルが小さい可能性: {file_size/1024:.1f} KB")
+
+        # 読み込みテスト
+        try:
+            import torch
+            _original = torch.load
+            torch.load = lambda *a, **k: _original(*a, **{**k, 'weights_only': False})
+
+            test_model = YOLO(model_path)
+            torch.load = _original
+
+            return ResponseBuilder.success(
+                data={
+                    "model_path": model_path,
+                    "file_size_mb": file_size / (1024*1024),
+                    "model_type": test_model.task if hasattr(test_model, 'task') else 'unknown'
+                },
+                message="モデルファイル検証完了"
             )
-    except Exception as e:
-        validation_result["errors"].append(f"ファイルサイズ確認エラー: {e}")
-        return validation_result
 
-    # 読み込みテスト
-    try:
-        import torch
-        _original = torch.load
-        torch.load = lambda *a, **k: _original(*a, **{**k, 'weights_only': False})
-        
-        test_model = YOLO(model_path)
-        torch.load = _original
-        
-        validation_result["valid"] = True
-        validation_result["warnings"].append("モデル検証完了")
-    except Exception as e:
-        validation_result["errors"].append(f"モデル読み込みテストエラー: {e}")
-        validation_result["suggestions"].append(
-            "モデルファイルが破損している可能性があります。再ダウンロードを試してください。"
-        )
-
-    return validation_result
+        except Exception as e:
+            raise ValidationError(
+                "モデル読み込みテストに失敗しました",
+                details={
+                    "model_path": model_path,
+                    "error": str(e),
+                    "suggestion": "モデルファイルが破損している可能性があります。再ダウンロードを試してください"
+                },
+                original_exception=e
+            )
 
 
+@validate_inputs(frame_dir=lambda x: isinstance(x, str))
+@handle_errors(logger=logger, error_category=ErrorCategory.VALIDATION)
 def validate_frame_directory(frame_dir: str) -> Dict[str, Any]:
     """
-    フレームディレクトリの検証
-    
+    フレームディレクトリの検証（統一エラーハンドリング対応版）
+
     Args:
         frame_dir: フレームディレクトリのパス
-        
+
     Returns:
-        検証結果の辞書
+        ResponseBuilder形式の検証結果
     """
-    validation_result = {
-        "valid": False,
-        "frame_count": 0,
-        "total_size_mb": 0,
-        "errors": [],
-        "warnings": []
-    }
+    with ErrorContext("フレームディレクトリ検証", logger=logger) as ctx:
+        ctx.add_info("frame_dir", frame_dir)
 
-    if not os.path.exists(frame_dir):
-        validation_result["errors"].append(f"ディレクトリが存在しません: {frame_dir}")
-        return validation_result
+        if not os.path.exists(frame_dir):
+            return ResponseBuilder.validation_error(
+                field="frame_dir",
+                message=f"ディレクトリが存在しません: {frame_dir}",
+                value=frame_dir,
+                details={"suggestion": "フレーム抽出が正常に実行されているか確認してください"}
+            )
 
-    try:
+        # 対応フォーマットのファイルを検索
+        supported_formats = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff')
         frame_files = [
-            f for f in os.listdir(frame_dir) 
-            if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+            f for f in os.listdir(frame_dir)
+            if f.lower().endswith(supported_formats)
         ]
-        validation_result["frame_count"] = len(frame_files)
 
         if len(frame_files) == 0:
-            validation_result["errors"].append("フレームファイルが見つかりません")
-            validation_result["suggestions"] = [
-                "フレーム抽出が正常に実行されているか確認してください",
-                "対応形式: .jpg, .jpeg, .png"
-            ]
-            return validation_result
+            return ResponseBuilder.validation_error(
+                field="frame_files",
+                message="フレームファイルが見つかりません",
+                value=frame_dir,
+                details={
+                    "supported_formats": list(supported_formats),
+                    "suggestion": "対応形式でフレームが抽出されているか確認してください"
+                }
+            )
 
-        # サンプルファイルでサイズ確認
+        # サイズ確認（サンプリング）
         total_size = 0
         corrupted_files = []
-        sample_size = min(10, len(frame_files))
-        
-        for frame_file in frame_files[:sample_size]:
+        sample_count = min(10, len(frame_files))
+
+        for frame_file in frame_files[:sample_count]:
             file_path = os.path.join(frame_dir, frame_file)
             try:
                 size = os.path.getsize(file_path)
                 total_size += size
 
-                # OpenCVで読み込みテスト
+                # OpenCV読み込みテスト
                 img = cv2.imread(file_path)
                 if img is None:
                     corrupted_files.append(frame_file)
             except Exception as e:
-                corrupted_files.append(f"{frame_file} ({e})")
+                corrupted_files.append(f"{frame_file} ({str(e)[:50]})")
 
         # 全体サイズ推定
-        if sample_size > 0:
-            avg_size = total_size / sample_size
+        if sample_count > 0:
+            avg_size = total_size / sample_count
             estimated_total_mb = (avg_size * len(frame_files)) / (1024*1024)
-            validation_result["total_size_mb"] = estimated_total_mb
+        else:
+            estimated_total_mb = 0
 
+        ctx.add_info("frame_count", len(frame_files))
+        ctx.add_info("estimated_size_mb", estimated_total_mb)
+
+        # 警告ログ
         if corrupted_files:
-            validation_result["warnings"].append(f"破損ファイル: {corrupted_files[:3]}")
+            logger.warning(f"破損ファイル検出: {corrupted_files[:3]}{'...' if len(corrupted_files) > 3 else ''}")
 
-        if validation_result["total_size_mb"] > 1000:  # 1GB以上
-            validation_result["warnings"].append(
-                f"大量のフレーム ({validation_result['total_size_mb']:.1f}MB)"
-            )
+        if estimated_total_mb > 1000:  # 1GB以上
+            logger.warning(f"大量のフレームデータ: {estimated_total_mb:.1f}MB")
 
-        validation_result["valid"] = True
+        return ResponseBuilder.success(
+            data={
+                "frame_count": len(frame_files),
+                "total_size_mb": estimated_total_mb,
+                "corrupted_files": corrupted_files,
+                "sample_tested": sample_count,
+                "supported_formats": list(supported_formats)
+            },
+            message="フレームディレクトリ検証完了"
+        )
 
-    except Exception as e:
-        validation_result["errors"].append(f"ディレクトリ検証エラー: {e}")
 
-    return validation_result
+# 🔧 後方互換性のためのラッパー関数（必要に応じて）
+def validate_model_file_legacy(model_path: str) -> Dict[str, Any]:
+    """後方互換性のための従来形式レスポンス"""
+    result = validate_model_file(model_path)
+
+    # ResponseBuilder形式 → 従来形式に変換
+    if result.get("success"):
+        return {
+            "valid": True,
+            "errors": [],
+            "warnings": [],
+            "data": result.get("data", {})
+        }
+    else:
+        return {
+            "valid": False,
+            "errors": [result.get("message", "Unknown error")],
+            "warnings": [],
+            "data": {}
+        }
+
+
+def validate_frame_directory_legacy(frame_dir: str) -> Dict[str, Any]:
+    """後方互換性のための従来形式レスポンス"""
+    result = validate_frame_directory(frame_dir)
+
+    if result.get("success"):
+        data = result.get("data", {})
+        return {
+            "valid": True,
+            "frame_count": data.get("frame_count", 0),
+            "total_size_mb": data.get("total_size_mb", 0),
+            "errors": [],
+            "warnings": [f"破損ファイル: {data['corrupted_files'][:3]}"] if data.get("corrupted_files") else []
+        }
+    else:
+        return {
+            "valid": False,
+            "frame_count": 0,
+            "total_size_mb": 0,
+            "errors": [result.get("message", "Unknown error")],
+            "warnings": []
+        }
