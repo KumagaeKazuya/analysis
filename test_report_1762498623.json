@@ -1,0 +1,47 @@
+{
+  "timestamp": 1762498623.0226712,
+  "total_time": 15.101562023162842,
+  "successful_stages": 5,
+  "total_stages": 5,
+  "success_rate": 1.0,
+  "setup_py_compliant": true,
+  "results": {
+    "stage_1": {
+      "success": true,
+      "details": "必須ライブラリ: 10/10"
+    },
+    "stage_2": {
+      "success": true,
+      "details": "ディレクトリ: 8/8, 設定: 4/4"
+    },
+    "stage_3": {
+      "success": true,
+      "details": "必須YOLO: 4/4, フォールバック: 2/2, 深度: 1/1, レベル: 完璧",
+      "setup_py_compliant": true,
+      "model_breakdown": {
+        "required_yolo": 4,
+        "fallback_yolo": 2,
+        "depth": 1,
+        "success_level": "完璧"
+      }
+    },
+    "stage_4": {
+      "success": true,
+      "details": "テスト動画: 既存のvideos/test.mp4を利用"
+    },
+    "stage_5": {
+      "success": true,
+      "details": "基本分析: 成功",
+      "fallback_mode": false,
+      "module_availability": {
+        "統一エラーハンドラー": true,
+        "包括的評価器": true,
+        "深度評価器": false,
+        "動画プロセッサー": true,
+        "メトリクス分析": true,
+        "設定管理": true,
+        "ロガー": true
+      }
+    }
+  }
+}

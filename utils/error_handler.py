@@ -20,6 +20,11 @@ class ErrorCategory(Enum):
     VALIDATION = "validation"
     INITIALIZATION = "initialization"
     PROCESSING = "processing"
+    EVALUATION = "evaluation"
+    MODEL = "model"  # 🔧 新規追加
+    EXPERIMENT = "experiment"  # 🔧 新規追加
+    DEPTH_PROCESSING = "depth_processing"  # 🔧 新規追加
+    VIDEO_PROCESSING = "video_processing"  # 🔧 新規追加
     RESOURCE = "resource"
     IO = "io"
     NETWORK = "network"
