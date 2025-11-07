@@ -1,57 +1,65 @@
 {
-  "download_timestamp": 1762491315.5560079,
+  "download_date": "2025-11-07 15:56:54",
   "models": {
     "yolo11m.pt": {
-      "description": "YOLO11 Medium - 中型検出モデル（テスト用・デフォルト）",
-      "size_mb": 38.8,
-      "use_case": "高精度検出用・テスト対象・デフォルト",
       "path": "models/yolo/yolo11m.pt",
-      "exists": true
+      "size_mb": 38.8,
+      "description": "YOLO11 Medium - 中型検出モデル（テスト用・デフォルト）",
+      "use_case": "高精度検出用・テスト対象・デフォルト使用",
+      "downloaded": true
     },
     "yolo11x.pt": {
-      "description": "YOLO11 XLarge - 最大検出モデル（テスト用）",
-      "size_mb": 109.3,
-      "use_case": "最高精度検出用・テスト対象",
       "path": "models/yolo/yolo11x.pt",
-      "exists": true
+      "size_mb": 109.33,
+      "description": "YOLO11 XLarge - 最大検出モデル（テスト用）",
+      "use_case": "最高精度検出用・テスト対象",
+      "downloaded": true
     },
     "yolo11m-pose.pt": {
-      "description": "YOLO11 Medium Pose - 中型ポーズ推定（テスト用・デフォルト）",
-      "size_mb": 40.5,
-      "use_case": "高精度ポーズ推定・テスト対象・デフォルト",
       "path": "models/yolo/yolo11m-pose.pt",
-      "exists": true
+      "size_mb": 40.49,
+      "description": "YOLO11 Medium Pose - 中型ポーズ推定（テスト用・デフォルト）",
+      "use_case": "高精度ポーズ推定・テスト対象・デフォルト使用",
+      "downloaded": true
     },
     "yolo11x-pose.pt": {
-      "description": "YOLO11 XLarge Pose - 最大ポーズ推定（テスト用）",
-      "size_mb": 113.0,
-      "use_case": "最高精度ポーズ推定・テスト対象",
       "path": "models/yolo/yolo11x-pose.pt",
-      "exists": true
+      "size_mb": 112.99,
+      "description": "YOLO11 XLarge Pose - 最大ポーズ推定（テスト用）",
+      "use_case": "最高精度ポーズ推定・テスト対象",
+      "downloaded": true
     },
     "yolo11n.pt": {
-      "description": "YOLO11 Nano - 軽量検出モデル（フォールバック用）",
-      "size_mb": 5.4,
-      "use_case": "高速処理用・フォールバック",
       "path": "models/yolo/yolo11n.pt",
-      "exists": true
+      "size_mb": 5.35,
+      "description": "YOLO11 Nano - 軽量検出モデル（フォールバック用）",
+      "use_case": "高速処理用・フォールバック",
+      "downloaded": true
     },
     "yolo11n-pose.pt": {
-      "description": "YOLO11 Nano Pose - 軽量ポーズ推定（フォールバック用）",
-      "size_mb": 6.0,
-      "use_case": "高速ポーズ推定・フォールバック",
       "path": "models/yolo/yolo11n-pose.pt",
-      "exists": true
+      "size_mb": 5.97,
+      "description": "YOLO11 Nano Pose - 軽量ポーズ推定（フォールバック用）",
+      "use_case": "高速ポーズ推定・フォールバック",
+      "downloaded": true
     }
   },
   "default_models": {
     "detection": "yolo11m.pt",
     "pose": "yolo11m-pose.pt"
   },
-  "test_required_models": [
-    "yolo11m.pt",
-    "yolo11x.pt",
-    "yolo11m-pose.pt",
-    "yolo11x-pose.pt"
-  ]
+  "model_hierarchy": {
+    "nano": [
+      "yolo11n.pt",
+      "yolo11n-pose.pt"
+    ],
+    "medium": [
+      "yolo11m.pt",
+      "yolo11m-pose.pt"
+    ],
+    "xlarge": [
+      "yolo11x.pt",
+      "yolo11x-pose.pt"
+    ]
+  }
 }

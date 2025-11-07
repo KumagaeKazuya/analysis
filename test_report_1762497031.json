@@ -1,0 +1,43 @@
+{
+  "timestamp": 1762497031.252867,
+  "total_time": 18.457697868347168,
+  "successful_stages": 5,
+  "total_stages": 6,
+  "success_rate": 0.8333333333333334,
+  "setup_py_compliant": true,
+  "results": {
+    "stage_1": {
+      "success": true,
+      "details": "必須ライブラリ: 10/10"
+    },
+    "stage_2": {
+      "success": true,
+      "details": "ディレクトリ: 8/8, 設定: 4/4"
+    },
+    "stage_3": {
+      "success": true,
+      "details": "必須YOLO: 4/4, フォールバック: 2/2, 深度: 1/1, レベル: 完璧",
+      "setup_py_compliant": true,
+      "model_breakdown": {
+        "required_yolo": 4,
+        "fallback_yolo": 2,
+        "depth": 1,
+        "success_level": "完璧"
+      }
+    },
+    "stage_4": {
+      "success": true,
+      "details": "テスト動画: 既存のvideos/test.mp4を利用"
+    },
+    "stage_5": {
+      "success": true,
+      "details": "基本分析: 成功",
+      "fallback_mode": false,
+      "module_availability": {}
+    },
+    "stage_6": {
+      "success": false,
+      "details": "深度分析失敗: Traceback (most recent call last):\n  File \"/Users/kumagaekazuya/yolo11_env/analysis/improved_main.py"
+    }
+  }
+}
