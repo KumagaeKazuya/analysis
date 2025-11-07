@@ -1,0 +1,43 @@
+models:
+  available_depth_models:
+  - name: midas_v21_384
+    path: models/depth/midas_v21_384.pt
+    size_mb: 402.9367914199829
+  - name: midas_v21_small_256
+    path: models/depth/midas_v21_small_256.pt
+    size_mb: 81.78854465484619
+  detection: models/yolo/yolo11m.pt
+  pose: models/yolo/yolo11m-pose.pt
+output_dir: outputs
+processing:
+  depth_estimation:
+    camera_angle: 15
+    camera_height: 3.0
+    classroom_mode: true
+    device: auto
+    distance_zones:
+      back:
+      - 6.0
+      - 10.0
+      far_back:
+      - 10.0
+      - 20.0
+      front:
+      - 0.0
+      - 3.0
+      middle:
+      - 3.0
+      - 6.0
+    enabled: true
+    input_size:
+    - 256
+    - 256
+    model_path: models/depth/midas_v21_small_256.pt
+    model_type: midas
+    save_depth_maps: false
+  detection:
+    confidence_threshold: 0.3
+    iou_threshold: 0.45
+  tile_inference:
+    enabled: false
+video_dir: videos

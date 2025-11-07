@@ -7,19 +7,24 @@
 3. ErrorContextによる詳細なエラートラッキング
 4. カスタムエラークラスの使用
 5. スタックトレース自動記録
+6. 深度推定 (MiDaS) 統合機能
 """
 
 import os
 import cv2
 import logging
+import pandas as pd
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+from processors.depth_processor import ClassroomDepthProcessor
 
 # 🔧 統一エラーハンドラーからインポート
 from utils.error_handler import (
     VideoProcessingError,
     FileIOError,
     ConfigurationError,
+    ValidationError,
+    ModelInitializationError,
     ResponseBuilder,
     handle_errors,
     validate_inputs,
@@ -32,13 +37,13 @@ logger = logging.getLogger(__name__)
 
 
 class VideoProcessor:
-    """動画処理クラス（統一エラーハンドリング完全対応版）"""
+    """動画処理クラス（統一エラーハンドリング完全対応版 + 深度推定統合）"""
 
     @handle_errors(logger=logger, error_category=ErrorCategory.INITIALIZATION)
     def __init__(self, config):
         """
         初期化（統一エラーハンドリング対応版）
-        
+
         Args:
             config: 設定オブジェクト
         """
@@ -48,34 +53,58 @@ class VideoProcessor:
                     "設定オブジェクトがNullです",
                     details={"config": str(config)}
                 )
-                
+
             self.config = config
             self.logger = logging.getLogger(__name__)
-            
+
             # タイル推論の有効性チェック
             self.tile_enabled = config.get('processing.tile_inference.enabled', False)
-            
+
+            # 深度推定の有効性チェック (新規追加)
+            self.depth_enabled = config.get('processing.depth_estimation.enabled', False)
+            self.depth_processor = None
+
+            # 真祖推定プロセッサーの初期化
+            if self.depth_enabled:
+                try:
+                    from processors.depth_processor import ClassroomDepthProcessor
+                    self.depth_processor = ClassroomDepthProcessor(config)
+                    self.logger.info("✅ 深度推定プロセッサー初期化完了")
+                    ctx.add_info("depth_processor_initialized", True)
+                except ImportError as e:
+                    self.logger.warning(f"⚠️ 深度推定プロセッサーの初期化に失敗しました: {e}")
+                    self.depth_enabled = False
+                    ctx.add_info("depth_processor_failed", str(e))
+
             # 必要な設定項目の存在確認
             required_configs = ['video_dir', 'model_dir', 'output_dir']
             missing_configs = []
-            
+
             for req_config in required_configs:
                 if not hasattr(config, req_config) or not getattr(config, req_config):
                     missing_configs.append(req_config)
-            
+
             if missing_configs:
                 raise ConfigurationError(
                     f"必要な設定が不足しています: {missing_configs}",
                     details={"missing_configs": missing_configs}
                 )
-            
+
             ctx.add_info("tile_enabled", self.tile_enabled)
+            ctx.add_info("depth_enabled", self.depth_enabled)
             ctx.add_info("video_dir", getattr(config, 'video_dir', 'N/A'))
-            
+
+            # 初期化完了ログ
+            features = []
             if self.tile_enabled:
-                self.logger.info("🔲 タイル推論モードで初期化")
+                features.append("タイル推論")
+            if self.depth_enabled:
+                features.append("深度推定")
+
+            if features:
+                self.logger.info(f"🚀 VideoProcessor初期化完了 (機能: {', '.join(features)})")
             else:
-                self.logger.info("📋 通常推論モードで初期化")
+                self.logger.info("📋 VideoProcessor初期化完了 (通常モード)")
 
     @validate_inputs(
         video_path=lambda x: isinstance(x, (str, Path)),
@@ -83,19 +112,19 @@ class VideoProcessor:
     )
     @handle_errors(logger=logger, error_category=ErrorCategory.PROCESSING)
     def extract_frames(
-        self, 
-        video_path: Path, 
-        output_dir: Path, 
+        self,
+        video_path: Path,
+        output_dir: Path,
         **kwargs
     ) -> Dict[str, Any]:
         """
         動画からフレームを抽出（統一エラーハンドリング対応版）
-        
+
         Args:
             video_path: 動画ファイルのパス
             output_dir: フレーム出力ディレクトリ
             **kwargs: interval_sec などの追加設定
-            
+
         Returns:
             ResponseBuilder形式の結果辞書
         """
@@ -103,9 +132,9 @@ class VideoProcessor:
             # 出力ディレクトリ作成
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-            
+
             interval_sec = kwargs.get(
-                'interval_sec', 
+                'interval_sec',
                 self.config.get('processing.frame_sampling.interval_sec', 2)
             )
 
@@ -265,7 +294,91 @@ class VideoProcessor:
         **kwargs
     ) -> Dict[str, Any]:
         """
-        検出・追跡処理を実行（統一エラーハンドリング対応版）
+        検出・追跡処理を実行（通常版）
+
+        Args:
+            frame_dir: フレームディレクトリ
+            video_name: 動画名
+            **kwargs: 追加設定
+
+        Returns:
+            ResponseBuilder形式の処理結果
+        """
+        # 深度推定が有効な場合は深度統合版を呼び出し
+        if self.depth_enabled and self.depth_processor:
+            return self._run_detection_tracking_with_depth(
+                frame_dir, video_name, **kwargs
+            )
+        
+        # 通常版処理
+        return self._run_detection_tracking_normal(
+            frame_dir, video_name, **kwargs
+        )
+
+    @validate_inputs(
+        frame_dir=lambda x: isinstance(x, (str, Path)),
+        video_name=lambda x: isinstance(x, str) and len(x) > 0
+    )
+    @handle_errors(logger=logger, error_category=ErrorCategory.PROCESSING)
+    def run_detection_tracking_with_depth(
+        self,
+        frame_dir: Path,
+        video_name: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        深度推定統合版の検出・追跡処理（新規追加）
+
+        Args:
+            frame_dir: フレームディレクトリ
+            video_name: 動画名
+            **kwargs: 追加設定
+
+        Returns:
+            ResponseBuilder形式の処理結果
+        """
+        with ErrorContext(f"深度統合検出・追跡: {video_name}", logger=self.logger) as ctx:
+            self.logger.info(f"🔍🎯 深度統合検出・追跡開始: {video_name}")
+
+            # 基本の検出・追跡処理を実行
+            detection_results = self._run_detection_tracking_normal(frame_dir, video_name, **kwargs)
+
+            if not detection_results.get("success", False):
+                self.logger.warning("基本検出・追跡が失敗したため、深度統合をスキップ")
+                return detection_results
+
+            # 深度推定プロセッサーの確認
+            if not self.depth_processor:
+                self.logger.warning("深度推定プロセッサーが初期化されていません")
+                return detection_results
+
+            try:
+                # 深度情報を追加
+                enhanced_results = self._add_depth_information(
+                    detection_results, frame_dir, video_name
+                )
+
+                ctx.add_info("depth_integration_success", True)
+                self.logger.info(f"✅ 深度統合検出・追跡完了: {video_name}")
+
+                return enhanced_results
+
+            except Exception as e:
+                self.logger.error(f"深度情報追加エラー: {e}")
+                ctx.add_info("depth_integration_failed", str(e))
+
+                # 深度統合に失敗した場合は基本結果を返す
+                return detection_results
+
+    @handle_errors(logger=logger, error_category=ErrorCategory.PROCESSING)
+    def _run_detection_tracking_normal(
+        self,
+        frame_dir: Path,
+        video_name: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        通常の検出・追跡処理（深度統合から分離）
 
         Args:
             frame_dir: フレームディレクトリ
@@ -354,6 +467,167 @@ class VideoProcessor:
 
             return result
 
+    @handle_errors(logger=logger, error_category=ErrorCategory.PROCESSING)
+    def _add_depth_information(
+        self,
+        detection_results: Dict[str, Any],
+        frame_dir: Path,
+        video_name: str
+    ) -> Dict[str, Any]:
+        """
+        検出結果に深度情報を追加（新規追加）
+
+        Args:
+            detection_results: 基本検出結果
+            frame_dir: フレームディレクトリ
+            video_name: 動画名
+
+        Returns:
+            深度情報が統合された検出結果
+        """
+        with ErrorContext(f"深度情報統合: {video_name}", logger=self.logger) as ctx:
+            result_data = detection_results.get("data", {})
+            csv_path = result_data.get("csv_path")
+
+            if not csv_path or not Path(csv_path).exists():
+                raise ValidationError(
+                    "検出結果CSVが見つかりません",
+                    details={"csv_path": csv_path, "video_name": video_name}
+                )
+
+            ctx.add_info("original_csv", csv_path)
+
+            # CSVファイルを読み込み
+            try:
+                df = pd.read_csv(csv_path)
+                if df.empty:
+                    raise ValidationError(
+                        "検出結果CSVが空です",
+                        details={"csv_path": csv_path}
+                    )
+
+                ctx.add_info("detection_count", len(df))
+                self.logger.info(f"📊 検出結果読み込み: {len(df)}件")
+
+            except Exception as e:
+                raise FileIOError(
+                    f"検出結果CSV読み込みエラー: {e}",
+                    details={"csv_path": csv_path},
+                    original_exception=e
+                )
+
+            # フレームファイルのマッピング作成
+            frame_files = {f.stem: f for f in frame_dir.glob("*.jpg")}
+            ctx.add_info("available_frames", len(frame_files))
+
+            # 深度情報を追加した新しいデータフレーム
+            enhanced_rows = []
+            processed_frames = set()
+
+            for idx, row in df.iterrows():
+                try:
+                    frame_name = f"{video_name}_frame{int(row['frame']):06d}"
+
+                    if frame_name not in frame_files:
+                        # フレームファイルが見つからない場合はデフォルト値
+                        enhanced_row = row.to_dict()
+                        enhanced_row.update({
+                            'depth_distance': -1,
+                            'depth_zone': 'unknown',
+                            'depth_confidence': 0.0,
+                            'depth_error': 'frame_not_found'
+                        })
+                        enhanced_rows.append(enhanced_row)
+                        continue
+
+                    # フレーム画像を読み込み（必要な場合のみ）
+                    if frame_name not in processed_frames:
+                        frame_path = frame_files[frame_name]
+                        frame_image = cv2.imread(str(frame_path))
+
+                        if frame_image is None:
+                            self.logger.warning(f"フレーム読み込み失敗: {frame_path}")
+                            depth_info = {
+                                'depth_distance': -1,
+                                'depth_zone': 'unknown',
+                                'depth_confidence': 0.0,
+                                'depth_error': 'frame_read_failed'
+                            }
+                        else:
+                            # 深度推定実行
+                            depth_map = self.depth_processor.estimate_depth(frame_image)
+                            processed_frames.add(frame_name)
+
+                            # バウンディングボックスの深度推定
+                            bbox = (int(row['x1']), int(row['y1']), int(row['x2']), int(row['y2']))
+                            depth_info = self.depth_processor.estimate_object_distance(depth_map, bbox)
+
+                            # 深度マップ保存（オプション）
+                            if self.config.get('processing.depth_estimation.save_depth_maps', False):
+                                depth_dir = frame_dir.parent / "depth_maps"
+                                depth_dir.mkdir(exist_ok=True)
+                                depth_map_path = depth_dir / f"{frame_name}_depth.jpg"
+                                cv2.imwrite(str(depth_map_path), depth_map)
+
+                    # 行にデータを追加
+                    enhanced_row = row.to_dict()
+                    enhanced_row.update({
+                        'depth_distance': depth_info.get('distance', -1),
+                        'depth_zone': depth_info.get('zone', 'unknown'),
+                        'depth_confidence': depth_info.get('confidence', 0.0),
+                        'depth_mean': depth_info.get('mean_distance', -1),
+                        'depth_std': depth_info.get('distance_std', -1)
+                    })
+                    enhanced_rows.append(enhanced_row)
+
+                except Exception as e:
+                    self.logger.warning(f"フレーム{row.get('frame', 'unknown')}の深度処理エラー: {e}")
+                    # エラーの場合はデフォルト値で継続
+                    enhanced_row = row.to_dict()
+                    enhanced_row.update({
+                        'depth_distance': -1,
+                        'depth_zone': 'error',
+                        'depth_confidence': 0.0,
+                        'depth_error': str(e)
+                    })
+                    enhanced_rows.append(enhanced_row)
+
+            # 拡張データフレームを作成
+            enhanced_df = pd.DataFrame(enhanced_rows)
+
+            # 拡張CSVを保存
+            enhanced_csv_path = str(csv_path).replace('.csv', '_enhanced.csv')
+            enhanced_df.to_csv(enhanced_csv_path, index=False)
+
+            ctx.add_info("enhanced_csv", enhanced_csv_path)
+            ctx.add_info("processed_frames", len(processed_frames))
+
+            # 深度統計
+            valid_depths = enhanced_df[enhanced_df['depth_distance'] >= 0]
+            depth_stats = {
+                "total_detections": len(enhanced_df),
+                "valid_depth_detections": len(valid_depths),
+                "depth_success_rate": len(valid_depths) / len(enhanced_df) if len(enhanced_df) > 0 else 0,
+                "zone_distribution": enhanced_df['depth_zone'].value_counts().to_dict()
+            }
+
+            ctx.add_info("depth_stats", depth_stats)
+            self.logger.info(f"🔍 深度統合完了: {len(valid_depths)}/{len(enhanced_df)}件成功")
+
+            # 結果を更新
+            updated_result_data = result_data.copy()
+            updated_result_data.update({
+                "enhanced_csv_path": enhanced_csv_path,
+                "original_csv_path": csv_path,
+                "depth_enabled": True,
+                "depth_statistics": depth_stats
+            })
+
+            return ResponseBuilder.success(
+                data=updated_result_data,
+                message=f"深度統合検出・追跡完了: {video_name}"
+            )
+
     @handle_errors(logger=logger, error_category=ErrorCategory.VALIDATION)
     def _build_processing_config(self, kwargs: Dict) -> Dict[str, Any]:
         """
@@ -398,7 +672,13 @@ class VideoProcessor:
                 # メモリ・バッチ設定
                 "batch_size": self.config.get('processing.batch_size', 8),
                 "max_memory_gb": self.config.get('processing.max_memory_gb', 3.0),
-                "streaming_output": self.config.get('processing.streaming_output', True)
+                "streaming_output": self.config.get('processing.streaming_output', True),
+
+                # 🔍 深度推定設定（新規追加）
+                "depth_estimation": {
+                    "enabled": self.depth_enabled,
+                    "save_depth_maps": self.config.get('processing.depth_estimation.save_depth_maps', False)
+                }
             }
 
             # タイル推論設定を追加
@@ -425,6 +705,7 @@ class VideoProcessor:
             ctx.add_info("config_keys", list(config.keys()))
             ctx.add_info("confidence_threshold", config["confidence_threshold"])
             ctx.add_info("batch_size", config["batch_size"])
+            ctx.add_info("depth_enabled", self.depth_enabled)
 
             return config
 
@@ -584,17 +865,18 @@ class VideoProcessor:
                     original_exception=e
                 )
 
-    @handle_errors(logger=logger, error_category=ErrorCategory.PROCESSING)  # INFO → PROCESSING に変更
+    @handle_errors(logger=logger, error_category=ErrorCategory.PROCESSING)
     def get_processing_stats(self) -> Dict[str, Any]:
         """
         処理統計を取得（統一エラーハンドリング対応版）
-        
+
         Returns:
             統計情報の辞書
         """
         with ErrorContext("処理統計取得", logger=self.logger) as ctx:
             stats = {
                 "tile_enabled": self.tile_enabled,
+                "depth_enabled": self.depth_enabled,  # 新規追加
                 "config_summary": {
                     "video_dir": getattr(self.config, 'video_dir', 'N/A'),
                     "model_dir": getattr(self.config, 'model_dir', 'N/A'),
@@ -605,9 +887,21 @@ class VideoProcessor:
                     "frame_sampling": True,
                     "detection_tracking": True,
                     "tile_inference": self.tile_enabled,
+                    "depth_estimation": self.depth_enabled,  # 新規追加
                     "memory_efficient": True
                 }
             }
 
+            # 🔍 深度推定関連統計（新規追加）
+            if self.depth_enabled and self.depth_processor:
+                stats["depth_processor_info"] = {
+                    "model_type": "midas",
+                    "classroom_mode": getattr(self.depth_processor, 'classroom_mode', False),
+                    "camera_height": getattr(self.depth_processor, 'camera_height', 'N/A'),
+                    "camera_angle": getattr(self.depth_processor, 'camera_angle', 'N/A')
+                }
+
             ctx.add_info("stats_collected", True)
+            ctx.add_info("features_enabled", [k for k, v in stats["processing_capabilities"].items() if v])
+
             return stats

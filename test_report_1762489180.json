@@ -1,0 +1,21 @@
+{
+  "timestamp": 1762489180.3310442,
+  "total_time": 11.48124885559082,
+  "successful_stages": 2,
+  "total_stages": 3,
+  "success_rate": 0.6666666666666666,
+  "results": {
+    "stage_1": {
+      "success": true,
+      "details": "必須ライブラリ: 10/10"
+    },
+    "stage_2": {
+      "success": true,
+      "details": "ディレクトリ: 8/8, 設定: 4/4"
+    },
+    "stage_3": {
+      "success": false,
+      "details": "YOLO: 0/14, 深度: 0/2"
+    }
+  }
+}

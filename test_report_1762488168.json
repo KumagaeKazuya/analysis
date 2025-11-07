@@ -1,0 +1,86 @@
+{
+  "timestamp": 1762488168.878528,
+  "total_time": 30.278021097183228,
+  "successful_stages": 5,
+  "total_stages": 12,
+  "success_rate": 0.4166666666666667,
+  "results": {
+    "stage_1": {
+      "success": true,
+      "details": "必須ライブラリ: 10/10"
+    },
+    "stage_2": {
+      "success": true,
+      "details": "ディレクトリ: 8/8, 設定: 4/4"
+    },
+    "stage_3": {
+      "success": false,
+      "details": "YOLO: 0/14, 深度: 0/2"
+    },
+    "stage_4": {
+      "success": true,
+      "details": "テスト動画: videos/test.mp4 既存利用"
+    },
+    "stage_5": {
+      "success": false,
+      "details": "基本分析失敗: Traceback (most recent call last):\n  File \"/Users/kumagaekazuya/yolo11_env/analysis/improved_main.py"
+    },
+    "stage_6": {
+      "success": false,
+      "details": "深度分析失敗: Traceback (most recent call last):\n  File \"/Users/kumagaekazuya/yolo11_env/analysis/improved_main.py"
+    },
+    "stage_7": {
+      "success": false,
+      "details": "成功モデル: 0/3",
+      "model_results": {
+        "nano": {
+          "success": false
+        },
+        "small": {
+          "success": false
+        },
+        "medium": {
+          "success": false
+        }
+      }
+    },
+    "stage_8": {
+      "success": false,
+      "details": "成功実験: 0/3",
+      "experiment_results": {
+        "camera_calibration": {
+          "success": false
+        },
+        "model_ensemble": {
+          "success": false
+        },
+        "depth_analysis_comparison": {
+          "success": false
+        }
+      }
+    },
+    "stage_9": {
+      "success": true,
+      "details": "結果確認: 成功"
+    },
+    "stage_10": {
+      "success": true,
+      "details": "エラー処理: 3/3 適切"
+    },
+    "stage_11": {
+      "success": false,
+      "details": "パフォーマンス: 問題あり",
+      "performance": {
+        "processing_time": 0.9656331539154053,
+        "memory_usage": 0.015625,
+        "start_memory": 91.34375,
+        "end_memory": 91.359375,
+        "success": false
+      }
+    },
+    "stage_12": {
+      "success": false,
+      "details": "統合チェック: 3/4 成功"
+    }
+  }
+}
