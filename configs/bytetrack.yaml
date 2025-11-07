@@ -1,4 +1,3 @@
-
 # ByteTrack設定ファイル
 track_thresh: 0.5
 track_buffer: 30

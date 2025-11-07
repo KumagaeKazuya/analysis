@@ -1,121 +1,25 @@
-# 設定ファイル
-
-# 基本設定
-project_name: "yolo11_wide_angle_analysis"
-version: "1.0.0"
-
-# パス設定
-paths:
-  video_dir: "videos"
-  model_dir: "models"
-  output_dir: "outputs"
-
-# モデル設定
-models:
-  detection: "yolo11n.pt"
-  pose: "yolo11n-pose.pt"
-  tracking_config: "bytetrack.yaml"
-
-# 処理設定
+# YOLO11 基本設定ファイル（Mediumモデル仕様）
 processing:
-  # ⭐ Apple Silicon GPU (MPS) 設定
-  device: "mps"              # Apple GPU使用（重要！）
-  batch_size: 8              # メモリに応じて調整
-  max_memory_gb: 3.0         # メモリ制限
-  streaming_output: true     # ストリーミング処理
-
-  frame_sampling:
-    interval_sec: 5          # フレーム間隔（メモリ節約のため5秒）
-    max_frames: 300          # 最大フレーム数（メモリ節約）
-
+  depth_estimation:
+    enabled: false
   detection:
-    confidence_threshold: 0.4  # 検出信頼度の閾値
-    iou_threshold: 0.5         # IoU（重なり度）閾値
-    classes: [0]               # 検出対象クラス（0: person）
-
-  tracking:
-    track_thresh: 0.5        # トラッキング信頼度閾値
-    track_buffer: 30         # トラッキングバッファサイズ
-    match_thresh: 0.8        # トラッキング一致閾値
-
-  # タイル推論設定（最初は無効）
+    confidence_threshold: 0.3
+    iou_threshold: 0.45
   tile_inference:
-    enabled: false           # 最初は通常推論で試す
+    enabled: false
     tile_size: [640, 640]
     overlap_ratio: 0.2
-    max_tiles_per_frame: 16
-    use_adaptive: false
-    nms_threshold: 0.5
-    memory_efficient_mode: true
-    batch_processing: false
-    save_tile_boundaries: false
-    save_comparison_images: true
 
-# 評価設定
-evaluation:
-  metrics:
-    basic_metrics: true
-    spatial_metrics: true
-    temporal_metrics: true
-    quality_metrics: true
-    wide_angle_metrics: true
-    tile_metrics: true
+models:
+  pose: "models/yolo/yolo11m-pose.pt"    # Medium ポーズモデル
+  detection: "models/yolo/yolo11m.pt"    # Medium 検出モデル
 
-  thresholds:
-    high_confidence: 0.7
-    low_confidence: 0.3
-    iou_overlap: 0.5
-    edge_region_ratio: 0.1
+  # 利用可能なモデル（コメントアウト）
+  # Nano (高速):     yolo11n.pt, yolo11n-pose.pt
+  # Small (バランス): yolo11s.pt, yolo11s-pose.pt  
+  # Medium (高精度):  yolo11m.pt, yolo11m-pose.pt ← 現在使用中
+  # Large (より高精度): yolo11l.pt, yolo11l-pose.pt
+  # XLarge (最高精度): yolo11x.pt, yolo11x-pose.pt
 
-# 可視化設定（メモリ節約版）
-visualization:
-  generate_plots: true
-  save_annotated_frames: true    # ⚠️ メモリ節約のため無効
-  create_summary_video: false     # ⚠️ メモリ節約のため無効
-
-  tile_visualization:
-    show_tile_boundaries: true
-    color_code_by_tile: true
-    show_tile_statistics: true
-    create_tile_heatmap: false
-
-  plot_settings:
-    dpi: 300
-    figure_size: [12, 8]
-    font_size: 12
-
-# 実験設定
-experiments:
-  calibration:
-    type: "camera_calibration"
-    parameters:
-      enable_undistortion: true
-      calibration_file: "camera_params.json"
-
-  ensemble:
-    type: "model_ensemble"
-    parameters:
-      models: ["yolo11n.pt", "yolo11s.pt"]
-      voting_strategy: "confidence_weighted"
-
-  augmentation:
-    type: "data_augmentation"
-    parameters:
-      enable_tta: true
-      tta_scales: [0.8, 1.0, 1.2]
-      tta_flips: [false, true]
-
-  tile_comparison:
-    type: "tile_inference_comparison"
-    parameters:
-      compare_with_baseline: true
-      sample_frames: 10
-      tile_sizes: [[640, 640]]
-      overlap_ratios: [0.2]
-
-# ロギング設定
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file_handler: true
-  console_handler: true
+video_dir: "videos"
+output_dir: "outputs"
