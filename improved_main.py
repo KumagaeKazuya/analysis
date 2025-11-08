@@ -12,6 +12,7 @@ YOLO11 広角カメラ分析システム - 改良版（統一エラーハンド�
 8. 🔧 条件付きインポートの強化（Stage 6修正）
 9. 🔧 直接インポート削除とフォールバック完全統合
 """
+import argparse
 import os
 import sys
 import json
@@ -21,6 +22,8 @@ from pathlib import Path
 import argparse
 from typing import Dict, Any, Optional, List
 import time
+from datetime import datetime  # 🔧 追加
+import traceback
 
 # 🔧 条件付きインポート - 必須ライブラリ
 try:
@@ -93,35 +96,215 @@ except ImportError as e:
         HIGH = "high"
         CRITICAL = "critical"
     
+    # Line 89-250付近のResponseBuilderクラスを以下で完全置換:
+
     class ResponseBuilder:
+        """統一レスポンスビルダー（完全後方互換版）"""
+
         @staticmethod
         def success(data=None, message=""):
+            """成功レスポンス"""
             return {"success": True, "data": data, "message": message}
-        
+
         @staticmethod
-        def error(exception, suggestions=None):
-            return {
-                "success": False, 
-                "error": {"message": str(exception), "type": type(exception).__name__},
-                "suggestions": suggestions or []
-            }
+        def error(
+            error=None,
+            include_traceback: bool = True,
+            suggestions=None,
+            message=None,                         # 🔧 yolopose_analyzer用
+            details=None,                         # 🔧 yolopose_analyzer用
+            exception=None,                       # 🔧 後方互換性
+            **kwargs                              # 🔧 完全互換のため
+        ):
+            """エラーレスポンス（完全互換API）"""
     
-    # 🔧 handle_errors デコレーター（完全版）
-    def handle_errors(error_category=None, suppress_exceptions=False, logger=None):
-        def decorator(func):
-            def wrapper(*args, **kwargs):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    error_logger = logger or logging.getLogger(__name__)
-                    error_logger.error(f"❌ エラー in {func.__name__} (カテゴリ: {error_category}): {e}")
-                    
-                    if suppress_exceptions:
-                        return ResponseBuilder.error(e)
-                    else:
-                        raise
-            return wrapper
-        return decorator
+            # 引数の正規化（複数のパターンに対応）
+            target_error = error or exception
+    
+            if message:
+                # messageが直接指定された場合（yolopose_analyzer用）
+                response = {
+                    "success": False,
+                    "error": {
+                        "error_type": "CustomError",
+                        "message": message,
+                        "category": "unknown",
+                        "severity": "error",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+            elif hasattr(target_error, 'to_dict') and callable(getattr(target_error, 'to_dict')):
+                # BaseYOLOErrorの場合
+                response = {
+                    "success": False,
+                    "error": target_error.to_dict()
+                }
+            elif isinstance(target_error, Exception):
+                # 標準Exceptionの場合
+                response = {
+                    "success": False,
+                    "error": {
+                        "error_type": type(target_error).__name__,
+                        "message": str(target_error),
+                        "category": "unknown",
+                        "severity": "error",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+        
+                if include_traceback:
+                    import traceback
+                    response["error"]["traceback"] = traceback.format_exc()
+            elif isinstance(target_error, str):
+                # 文字列エラーの場合
+                response = {
+                    "success": False,
+                    "error": {
+                        "error_type": "StringError",
+                        "message": target_error,
+                        "category": "unknown", 
+                        "severity": "error",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+            else:
+                # フォールバック
+                response = {
+                    "success": False,
+                    "error": {
+                        "error_type": "UnknownError",
+                        "message": "不明なエラーが発生しました",
+                        "category": "unknown",
+                        "severity": "error",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+    
+            # suggestions追加
+            if suggestions:
+                response["suggestions"] = suggestions
+        
+            # details追加（重要！）
+            if details:
+                response["details"] = details
+        
+            # その他のkwargs対応
+            for key, value in kwargs.items():
+                if key not in response:
+                    response[key] = value
+        
+            return response
+
+        @staticmethod
+        def validation_error(field=None, message=None, details=None, **kwargs):
+            """バリデーションエラー（完全後方互換）"""
+            if message:
+                error_message = message
+            elif field:
+                error_message = f"バリデーションエラー: {field}"
+            else:
+                error_message = "バリデーションエラー"
+            
+            response = {
+                "success": False,
+                "error": {
+                    "error_type": "ValidationError",
+                    "message": error_message,
+                    "field": field,
+                    "category": "validation",
+                    "severity": "error",
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+        
+            # details引数のサポート（重要！）
+            if details:
+                response["details"] = details
+            
+            # その他のkwargs対応
+            for key, value in kwargs.items():
+                if key not in response:
+                    response[key] = value
+            
+            return response
+
+        @staticmethod
+        def processing_error(step=None, message=None, details=None, **kwargs):
+            """処理エラー（完全互換）"""
+            error_message = message or f"処理エラー: {step}"
+            result = {
+                "success": False,
+                "error": {
+                    "error_type": "ProcessingError", 
+                    "message": error_message,
+                    "step": step,
+                    "category": "processing",
+                    "severity": "error",
+                    "timestamp": datetime.now().isoformat()
+               }
+            }
+        
+            if details:
+                result["details"] = details
+            
+            # その他のkwargs対応
+            for key, value in kwargs.items():
+                if key not in result:
+                    result[key] = value
+            
+            return result
+
+        @staticmethod
+        def configuration_error(config_key=None, message=None, details=None, **kwargs):
+            """設定エラー（完全互換）"""
+            error_message = message or f"設定エラー: {config_key}"
+            result = {
+                "success": False,
+                "error": {
+                    "error_type": "ConfigurationError",
+                    "message": error_message,
+                    "config_key": config_key,
+                    "category": "configuration",
+                    "severity": "error",
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+        
+            if details:
+                result["details"] = details
+            
+            # その他のkwargs対応
+            for key, value in kwargs.items():
+                if key not in result:
+                    result[key] = value
+            
+            return result
+
+        @staticmethod
+        def model_error(model_path=None, message=None, details=None, **kwargs):
+            """モデルエラー（完全互換）"""
+            error_message = message or f"モデルエラー: {model_path}"
+            result = {
+                "success": False,
+                "error": {
+                    "error_type": "ModelError",
+                    "message": error_message,
+                    "model_path": model_path,
+                    "category": "model",
+                    "severity": "error",
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+        
+            if details:
+                result["details"] = details
+            
+            # その他のkwargs対応
+            for key, value in kwargs.items():
+                if key not in result:
+                    result[key] = value
+            
+            return result
     
     class ErrorContext:
         def __init__(self, name, logger=None, raise_on_error=False):
@@ -313,12 +496,20 @@ except ImportError as e:
 if not VIDEO_PROCESSOR_AVAILABLE:
     class BasicVideoProcessor:
         def __init__(self, config):
+            """基本動画プロセッサー初期化（完全版）"""
             self.config = config
-            self.detection_model = None
-            self.pose_model = None
             self.logger = logging.getLogger(__name__)
-            self.processing_stats = {}
-            self.load_models()
+            self.processing_stats = {}  # 🔧 統計情報辞書を初期化
+    
+            if hasattr(config, 'get'):
+                self.output_dir = Path(config.get('output_dir', 'outputs'))
+                self.max_frames = config.get('processing.max_frames', 100)
+            else:
+                self.output_dir = Path('outputs')
+                self.max_frames = 100
+    
+            self.output_dir.mkdir(exist_ok=True)
+            self.logger.info(f"🎬 基本動画プロセッサー初期化完了")
         
         def load_models(self):
             """モデルロード（改善版）"""
@@ -352,162 +543,212 @@ if not VIDEO_PROCESSOR_AVAILABLE:
             except Exception as e:
                 self.logger.error(f"❌ モデルロードエラー: {e}")
         
-        def extract_frames(self, video_path, frame_dir, max_frames=100):
-            """フレーム抽出（完全版）"""
+        # BasicVideoProcessor の extract_frames メソッドを修正:
+
+        def extract_frames(self, video_path, frame_dir, max_frames=1000):
+            """フレーム抽出（統計修正版）"""
             try:
+                # 🔧 processing_statsの確実な初期化
+                if not hasattr(self, 'processing_stats'):
+                    self.processing_stats = {}
+            
                 self.logger.info(f"📸 フレーム抽出開始: {video_path}")
                 frame_dir = Path(frame_dir)
                 frame_dir.mkdir(parents=True, exist_ok=True)
-                
+
+                # 動画ファイルの存在確認
+                if not Path(video_path).exists():
+                    self.logger.error(f"❌ 動画ファイルが存在しません: {video_path}")
+                    return {"success": False, "error": f"動画ファイルが存在しません: {video_path}"}
+
+                # ファイルサイズチェック
+                file_size = Path(video_path).stat().st_size
+                if file_size == 0:
+                    self.logger.error(f"❌ 動画ファイルが空です: {video_path}")
+                    return {"success": False, "error": f"動画ファイルが空です: {video_path}"}
+
+                self.logger.info(f"📹 動画ファイルサイズ: {file_size / (1024*1024):.1f}MB")
+
+                # 🔧 OpenCVでフレーム抽出
                 cap = cv2.VideoCapture(str(video_path))
                 if not cap.isOpened():
-                    raise VideoProcessingError(f"動画ファイルを開けません: {video_path}")
-                
+                    self.logger.error(f"❌ 動画ファイルを開けません: {video_path}")
+                    return {"success": False, "error": f"動画ファイルを開けません: {video_path}"}
+
                 # 動画情報取得
                 frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
                 fps = cap.get(cv2.CAP_PROP_FPS)
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
                 duration = frame_count / fps if fps > 0 else 0
-                
+
                 self.logger.info(f"📹 動画情報: {width}x{height}, {frame_count}フレーム, {fps:.1f}FPS, {duration:.1f}秒")
-                
+
+                # フレーム数が0の場合のエラーハンドリング
+                if frame_count <= 0:
+                    cap.release()
+                    self.logger.error(f"❌ 有効なフレームが見つかりません: {video_path}")
+                    return {"success": False, "error": "有効なフレームが見つかりません"}
+
+                # 抽出間隔計算
                 interval = max(1, frame_count // max_frames)
                 self.logger.info(f"🔢 抽出間隔: {interval} (最大{max_frames}フレーム)")
-                
+
+                # フレーム抽出ループ
                 extracted = 0
-                for i in tqdm(range(0, frame_count, interval), desc="フレーム抽出"):
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+                frame_number = 0
+
+                while True:
                     ret, frame = cap.read()
-                    if ret:
-                        frame_path = frame_dir / f"frame_{i:06d}.jpg"
-                        cv2.imwrite(str(frame_path), frame)
-                        extracted += 1
-                
+                    if not ret:
+                        break
+
+                    if frame_number % interval == 0:
+                        frame_path = frame_dir / f"frame_{frame_number:06d}.jpg"
+                        success = cv2.imwrite(str(frame_path), frame)
+
+                        if success:
+                            extracted += 1
+                            if extracted >= max_frames:
+                                break
+                        else:
+                            self.logger.warning(f"⚠️ フレーム保存失敗: {frame_path}")
+            
+                    frame_number += 1
+
                 cap.release()
-                
+
+                # 🔧 実際に保存されたフレーム数を再確認（重要！）
+                saved_frames = len(list(frame_dir.glob("frame_*.jpg")))
+                self.logger.info(f"📊 OpenCVで抽出: {extracted}個")
+                self.logger.info(f"📊 実際に保存: {saved_frames}個")
+
+                # 🔧 最大値を採用（確実にフレーム数を取得）
+                final_extracted = max(extracted, saved_frames)
+
+                # 統計情報の更新
                 self.processing_stats["frame_extraction"] = {
                     "total_frames": frame_count,
-                    "extracted_frames": extracted,
+                    "extracted_frames": final_extracted,  # ← 確実な値
                     "video_fps": fps,
                     "video_duration": duration,
                     "resolution": [width, height],
                     "extraction_interval": interval
                 }
-                
-                self.logger.info(f"✅ フレーム抽出完了: {extracted}フレーム")
+
+                self.logger.info(f"✅ フレーム抽出完了: {final_extracted}フレーム")
+
+                if final_extracted == 0:
+                    self.logger.error("❌ フレーム抽出に失敗しました")
+                    return {"success": False, "error": "フレーム抽出に失敗しました"}
+
+                # 🔧 確実にextracted_framesを返す
                 return {
                     "success": True, 
-                    "extracted_frames": extracted, 
+                    "extracted_frames": final_extracted,  # ← 重要：この値が0になってはいけない
                     "video_info": self.processing_stats["frame_extraction"]
                 }
-                
+
             except Exception as e:
                 self.logger.error(f"❌ フレーム抽出エラー: {e}")
                 return {"success": False, "error": str(e)}
         
         def run_detection_tracking(self, frame_dir, video_name):
-            """基本検出・追跡処理（完全版）"""
+            """基本検出・追跡処理（安定化版）"""
             try:
-                self.logger.info(f"👁️ 検出・追跡処理開始: {video_name}")
+                self.logger.info(f"👁️ 基本検出・追跡処理開始: {video_name}")
                 frame_files = sorted(list(Path(frame_dir).glob("*.jpg")))
+        
                 if not frame_files:
-                    raise VideoProcessingError("フレームファイルが見つかりません")
-                
+                    raise VideoProcessingError(f"フレームファイルが見つかりません: {frame_dir}")
+        
+                self.logger.info(f"📸 処理対象フレーム: {len(frame_files)}個")
+        
+                # モデルの事前ロード確認
+                if not hasattr(self, 'detection_model') and not hasattr(self, 'pose_model'):
+                    self.load_models()
+        
                 detection_count = 0
-                pose_count = 0
-                processing_times = []
                 frame_stats = []
+        
+                # 信頼度しきい値（より低く設定して検出率向上）
+                conf_threshold = 0.25
+        
+                # 🔧 簡略化された処理ループ
+                for i, frame_file in enumerate(frame_files):
+                    try:
+                        # フレーム読み込み
+                        frame = cv2.imread(str(frame_file))
+                        if frame is None:
+                            self.logger.warning(f"⚠️ フレーム読み込み失敗: {frame_file}")
+                            continue
                 
-                # 信頼度しきい値
-                conf_threshold = 0.3
+                        frame_detections = 0
                 
-                for i, frame_file in enumerate(tqdm(frame_files, desc="検出処理")):
-                    frame_start_time = time.time()
-                    frame = cv2.imread(str(frame_file))
-                    
-                    frame_detections = 0
-                    frame_poses = 0
-                    detection_boxes = []
-                    
-                    # 検出実行
-                    if self.detection_model:
-                        try:
-                            det_results = self.detection_model(frame, verbose=False, conf=conf_threshold)
-                            if det_results and len(det_results[0].boxes) > 0:
-                                frame_detections = len(det_results[0].boxes)
-                                detection_count += frame_detections
-                                
-                                # ボックス情報保存
-                                for box in det_results[0].boxes:
-                                    detection_boxes.append({
-                                        "confidence": float(box.conf[0]) if len(box.conf) > 0 else 0.0,
-                                        "class": int(box.cls[0]) if len(box.cls) > 0 else 0,
-                                        "bbox": box.xyxy[0].tolist() if len(box.xyxy) > 0 else []
-                                    })
-                        except Exception as e:
-                            self.logger.warning(f"フレーム{i}検出エラー: {e}")
-                    
-                    # ポーズ実行
-                    if self.pose_model:
-                        try:
-                            pose_results = self.pose_model(frame, verbose=False, conf=conf_threshold)
-                            if pose_results and len(pose_results[0].boxes) > 0:
-                                frame_poses = len(pose_results[0].boxes)
-                                pose_count += frame_poses
-                        except Exception as e:
-                            self.logger.warning(f"フレーム{i}ポーズエラー: {e}")
-                    
-                    # フレーム統計記録
-                    frame_end_time = time.time()
-                    processing_time = frame_end_time - frame_start_time
-                    processing_times.append(processing_time)
-                    
-                    frame_stats.append({
-                        "frame_id": i,
-                        "frame_file": frame_file.name,
-                        "detections": frame_detections,
-                        "poses": frame_poses,
-                        "processing_time": processing_time,
-                        "timestamp": datetime.now().isoformat(),
-                        "confidence": np.mean([box["confidence"] for box in detection_boxes]) if detection_boxes else 0.0,
-                        "track_id": i  # 簡易トラッキングID
-                    })
+                        # 🔧 ポーズモデル優先（より確実）
+                        if hasattr(self, 'pose_model') and self.pose_model:
+                            try:
+                                results = self.pose_model(frame, verbose=False, conf=conf_threshold)
+                                if results and len(results[0].boxes) > 0:
+                                    frame_detections = len(results[0].boxes)
+                                    detection_count += frame_detections
+                            except Exception as e:
+                                self.logger.debug(f"フレーム{i}ポーズ検出エラー: {e}")
                 
+                        # フレーム統計記録（簡略化）
+                        frame_stats.append({
+                            "frame_id": i,
+                            "frame_file": frame_file.name,
+                            "detections": frame_detections,
+                            "conf": conf_threshold,  # 固定値
+                            "track_id": i,  # 簡易ID
+                            "timestamp": datetime.now().isoformat()
+                        })
+                
+                    except Exception as e:
+                        self.logger.warning(f"フレーム{i}処理エラー（続行）: {e}")
+                        continue
+        
                 # 結果CSV作成
                 output_dir = Path("outputs/temp") / video_name
                 output_dir.mkdir(parents=True, exist_ok=True)
                 csv_path = output_dir / f"{video_name}_results.csv"
-                
-                df = pd.DataFrame(frame_stats)
-                df.to_csv(csv_path, index=False)
-                
-                # 処理統計
-                self.processing_stats["detection_tracking"] = {
-                    "total_frames": len(frame_files),
-                    "total_detections": detection_count,
-                    "total_poses": pose_count,
-                    "avg_processing_time": np.mean(processing_times) if processing_times else 0,
-                    "total_processing_time": sum(processing_times),
-                    "fps_effective": len(frame_files) / sum(processing_times) if sum(processing_times) > 0 else 0
+        
+                if frame_stats:
+                    df = pd.DataFrame(frame_stats)
+                    df.to_csv(csv_path, index=False)
+                    self.logger.info(f"📊 結果CSV保存: {csv_path}")
+                else:
+                    # 🔧 空の場合でもCSVを作成
+                    empty_df = pd.DataFrame(columns=["frame_id", "frame_file", "detections", "conf", "track_id", "timestamp"])
+                    empty_df.to_csv(csv_path, index=False)
+                    self.logger.warning("⚠️ 検出結果なし - 空のCSVを作成")
+        
+                # 統計情報
+                self.processing_stats = {
+                    "detection_tracking": {
+                        "total_frames": len(frame_files),
+                        "processed_frames": len(frame_stats),
+                        "total_detections": detection_count,
+                        "success_rate": len(frame_stats) / len(frame_files) if frame_files else 0
+                    }
                 }
-                
-                self.logger.info(f"✅ 検出・追跡完了: 検出{detection_count}個, ポーズ{pose_count}個")
-                
+        
+                self.logger.info(f"✅ 基本検出・追跡完了: {detection_count}個検出 / {len(frame_stats)}フレーム処理")
+        
                 return {
                     "success": True,
                     "data": {
                         "csv_path": str(csv_path),
                         "detection_count": detection_count,
-                        "pose_count": pose_count,
                         "frame_count": len(frame_files),
-                        "processing_time": sum(processing_times),
+                        "processed_frames": len(frame_stats),
                         "processing_stats": self.processing_stats["detection_tracking"]
                     }
                 }
-                
+        
             except Exception as e:
-                self.logger.error(f"❌ 検出・追跡エラー: {e}")
+                self.logger.error(f"❌ 基本検出・追跡エラー: {e}")
                 return {"success": False, "error": str(e)}
         
         def run_detection_tracking_with_depth(self, frame_dir, video_name):
@@ -816,14 +1057,18 @@ if not LOGGER_AVAILABLE:
         logger = logging.getLogger(__name__)
         logger.info(f"🔧 基本ログ機能を初期化しました: {log_file}")
         return logger
-    class ImprovedYOLOAnalyzer:
-        """
-        YOLO11 広角カメラ分析システム（完全統合版）
-        - 深度推定統合対応
-        - モジュール不足完全対応
-        - Stage 5/6修正完了
-        - フォールバック機能完全統合
-        """
+
+# ✅ ここでクラス定義開始（if文の外、インデント0）
+class ImprovedYOLOAnalyzer:
+    """
+    YOLO11 広角カメラ分析システム（完全統合版）
+    - 深度推定統合対応
+    - モジュール不足完全対応
+    - Stage 5/6修正完了
+    - フォールバック機能完全統合
+    """
+
+    # Line 834-854を修正:
 
     def __init__(self, config_path: str = "configs/default.yaml"):
         """
@@ -832,18 +1077,18 @@ if not LOGGER_AVAILABLE:
         Args:
             config_path: 設定ファイルパス
         """
+        # 🔧 ロガーを最初に初期化
+        self.logger = setup_logger()
+    
         # エラーコンテキスト設定
         if ERROR_HANDLER_AVAILABLE:
-            context_manager = ErrorContext("ImprovedYOLOAnalyzer初期化", logger=logging.getLogger(__name__))
+            context_manager = ErrorContext("ImprovedYOLOAnalyzer初期化", logger=self.logger)
         else:
             context_manager = self._basic_context("ImprovedYOLOAnalyzer初期化")
-            
+        
         with context_manager as ctx:
             # 設定初期化
             self.config = self._initialize_config(config_path)
-            
-            # ロガー初期化
-            self.logger = setup_logger()
 
             # 深度推定有効性の確認
             self.depth_enabled = self.config.get('processing.depth_estimation.enabled', False)
@@ -851,7 +1096,7 @@ if not LOGGER_AVAILABLE:
 
             # 評価器の選択と初期化
             self._initialize_evaluator(ctx)
-            
+        
             # プロセッサーとアナライザー初期化
             self._initialize_processor_analyzer(ctx)
 
@@ -883,22 +1128,26 @@ if not LOGGER_AVAILABLE:
                 self.logger.debug(f"📝 {self.name} - {key}: {value}")
         return BasicContext(name)
 
+    # Line 857の_initialize_configメソッドを修正:
+
     def _initialize_config(self, config_path: str):
         """設定初期化（完全版）"""
         depth_config_path = "configs/depth_config.yaml"
-        
-        self.logger.info(f"⚙️ 設定初期化開始: {config_path}")
-        
+    
+        # ⚠️ ここで self.logger を使う前に、ロガーを初期化する必要がある
+        logger = logging.getLogger(__name__)  # 🔧 一時的なロガー使用
+        logger.info(f"⚙️ 設定初期化開始: {config_path}")
+    
         # 設定ファイルの優先順位決定
         if Path(config_path).exists():
             primary_config = config_path
-            self.logger.info(f"📄 指定設定ファイル使用: {config_path}")
+            logger.info(f"📄 指定設定ファイル使用: {config_path}")
         elif Path(depth_config_path).exists():
             primary_config = depth_config_path
-            self.logger.info(f"🔍 深度設定ファイル自動検出: {depth_config_path}")
+            logger.info(f"🔍 深度設定ファイル自動検出: {depth_config_path}")
         else:
             primary_config = config_path
-            self.logger.warning(f"⚠️ 設定ファイルが見つかりません: {config_path}")
+            logger.warning(f"⚠️ 設定ファイルが見つかりません: {config_path}")
 
         # 設定オブジェクト初期化
         if CONFIG_AVAILABLE and Config:
@@ -1030,8 +1279,8 @@ if not LOGGER_AVAILABLE:
             分析結果辞書
         """
         if ERROR_HANDLER_AVAILABLE:
-            context_manager = ErrorContext(f"ベースライン分析: {Path(video_path).name}", 
-                                         logger=self.logger, raise_on_error=False)
+            context_manager = ErrorContext(f"ベースライン分析: {Path(video_path).name}",
+                                        logger=self.logger, raise_on_error=False)
         else:
             context_manager = self._basic_context(f"ベースライン分析: {Path(video_path).name}")
 
@@ -1058,32 +1307,191 @@ if not LOGGER_AVAILABLE:
             try:
                 # Step 1: フレーム抽出
                 self.logger.info("📸 Step 1: フレーム抽出開始")
+                
+                # フレーム抽出実行
                 frame_result = self.processor.extract_frames(video_path, frame_dir)
                 
+                # 🔧 基本的な成功/失敗チェック
                 if not frame_result.get("success", False):
                     error_msg = f"フレーム抽出失敗: {frame_result.get('error', '不明なエラー')}"
                     self.error_collector.append(error_msg)
                     self.logger.error(f"❌ {error_msg}")
                     raise VideoProcessingError(error_msg)
 
-                extracted_frames = frame_result.get("extracted_frames", 0)
-                self.logger.info(f"✅ Step 1完了: {extracted_frames}フレーム抽出")
+                # 🔧 フレーム数の多重確認システム
+                
+                # 方法1: APIから返却された値
+                api_extracted_frames = frame_result.get("extracted_frames", 0)
+                self.logger.debug(f"📊 API返却フレーム数: {api_extracted_frames}")
+                
+                # 方法2: フレームディレクトリの直接確認
+                frame_files_jpg = list(frame_dir.glob("frame_*.jpg"))
+                frame_files_jpeg = list(frame_dir.glob("frame_*.jpeg"))
+                frame_files_png = list(frame_dir.glob("frame_*.png"))
+                
+                # すべての画像ファイルを統合
+                all_frame_files = frame_files_jpg + frame_files_jpeg + frame_files_png
+                actual_frame_count = len(all_frame_files)
+                
+                self.logger.debug(f"📊 ディレクトリ内ファイル数:")
+                self.logger.debug(f"  - JPGファイル: {len(frame_files_jpg)}個")
+                self.logger.debug(f"  - JPEGファイル: {len(frame_files_jpeg)}個") 
+                self.logger.debug(f"  - PNGファイル: {len(frame_files_png)}個")
+                self.logger.debug(f"  - 合計: {actual_frame_count}個")
+                
+                # 方法3: processing_statsからの取得
+                stats_frames = 0
+                if hasattr(self.processor, 'processing_stats') and self.processor.processing_stats:
+                    frame_extraction_stats = self.processor.processing_stats.get("frame_extraction", {})
+                    stats_frames = frame_extraction_stats.get("extracted_frames", 0)
+                
+                self.logger.debug(f"📊 統計情報フレーム数: {stats_frames}")
+                
+                # 🔧 最も信頼できる値を採用
+                frame_counts = [api_extracted_frames, actual_frame_count, stats_frames]
+                valid_counts = [count for count in frame_counts if count > 0]
+                
+                if valid_counts:
+                    # 有効な値がある場合は最大値を採用
+                    final_frame_count = max(valid_counts)
+                    self.logger.info(f"📊 フレーム数確定: {final_frame_count}個（候補: {frame_counts}）")
+                else:
+                    # すべて0の場合は詳細調査
+                    self.logger.warning("⚠️ 全ての方法でフレーム数が0です。詳細調査を実行...")
+                    
+                    # 方法4: より広範囲なファイル確認
+                    all_files = list(frame_dir.glob("*"))
+                    image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp']
+                    image_files = []
+                    
+                    for file_path in all_files:
+                        if file_path.suffix.lower() in image_extensions:
+                            image_files.append(file_path)
+                    
+                    final_frame_count = len(image_files)
+                    
+                    if final_frame_count > 0:
+                        self.logger.info(f"🔍 広範囲確認で発見: {final_frame_count}個の画像ファイル")
+                        # ファイル名の例を表示
+                        sample_files = [f.name for f in image_files[:3]]
+                        self.logger.debug(f"  サンプル: {sample_files}")
+                    else:
+                        # 方法5: 最後の手段 - ディレクトリ内容の完全チェック
+                        self.logger.error("🔍 最終確認 - ディレクトリ内容:")
+                        self.logger.error(f"  - パス: {frame_dir}")
+                        self.logger.error(f"  - 存在確認: {frame_dir.exists()}")
+                        self.logger.error(f"  - アクセス権限: {frame_dir.is_dir() if frame_dir.exists() else 'N/A'}")
+                        
+                        if frame_dir.exists():
+                            all_content = list(frame_dir.glob("*"))
+                            self.logger.error(f"  - 全ファイル({len(all_content)}個): {[f.name for f in all_content[:10]]}")
+                            
+                            # ファイルサイズ確認
+                            for file_path in all_content[:5]:
+                                if file_path.is_file():
+                                    size_mb = file_path.stat().st_size / (1024 * 1024)
+                                    self.logger.error(f"    {file_path.name}: {size_mb:.2f}MB")
+                
+                # 🔧 結果の詳細ログ出力
+                self.logger.info(f"✅ Step 1完了: {final_frame_count}フレーム抽出")
+                
+                if final_frame_count > 0:
+                    # 成功時の統計情報
+                    if actual_frame_count > 0 and len(all_frame_files) > 0:
+                        # ファイルサンプルの表示
+                        sample_count = min(3, len(all_frame_files))
+                        sample_files = [f.name for f in all_frame_files[:sample_count]]
+                        self.logger.info(f"📁 保存ファイル例: {sample_files}")
+                        
+                        # ファイルサイズ統計
+                        total_size = sum(f.stat().st_size for f in all_frame_files[:10])  # 最初の10ファイル
+                        avg_size_kb = (total_size / min(10, len(all_frame_files))) / 1024 if all_frame_files else 0
+                        self.logger.debug(f"📊 平均ファイルサイズ: {avg_size_kb:.1f}KB")
+                    
+                    # フレーム抽出率の計算
+                    if hasattr(self.processor, 'processing_stats') and self.processor.processing_stats:
+                        extraction_stats = self.processor.processing_stats.get("frame_extraction", {})
+                        total_frames = extraction_stats.get("total_frames", 0)
+                        if total_frames > 0:
+                            extraction_rate = (final_frame_count / total_frames) * 100
+                            self.logger.info(f"📊 抽出率: {extraction_rate:.1f}% ({final_frame_count}/{total_frames})")
+                
+                # 🔧 ゼロフレームの場合のエラー処理
+                if final_frame_count == 0:
+                    error_msg = "フレーム抽出数が0です。動画ファイルと処理を確認してください"
+                    self.error_collector.append(error_msg)
+                    self.logger.error(f"❌ {error_msg}")
+                    
+                    # 🔧 詳細なデバッグ情報を出力
+                    self.logger.error(f"🔍 デバッグ情報詳細:")
+                    self.logger.error(f"  動画ファイル:")
+                    self.logger.error(f"    - パス: {video_path}")
+                    self.logger.error(f"    - 存在: {Path(video_path).exists()}")
+                    if Path(video_path).exists():
+                        video_size = Path(video_path).stat().st_size / (1024 * 1024)
+                        self.logger.error(f"    - サイズ: {video_size:.1f}MB")
+                    
+                    self.logger.error(f"  出力ディレクトリ:")
+                    self.logger.error(f"    - パス: {frame_dir}")
+                    self.logger.error(f"    - 存在: {frame_dir.exists()}")
+                    self.logger.error(f"    - 権限: {oct(frame_dir.stat().st_mode)[-3:] if frame_dir.exists() else 'N/A'}")
+                    
+                    self.logger.error(f"  プロセッサ情報:")
+                    self.logger.error(f"    - タイプ: {type(self.processor).__name__}")
+                    self.logger.error(f"    - 設定: {getattr(self.processor, 'config', 'N/A')}")
+                    
+                    # frame_resultの詳細
+                    self.logger.error(f"  API応答:")
+                    self.logger.error(f"    - frame_result: {frame_result}")
+                    
+                    raise VideoProcessingError(error_msg)
+                
+                # ✅ 処理継続のためのフレーム数記録
+                # 後続処理で使用するため、確定したフレーム数を保存
+                if not hasattr(self, 'current_analysis_stats'):
+                    self.current_analysis_stats = {}
+                self.current_analysis_stats['extracted_frame_count'] = final_frame_count
+                self.current_analysis_stats['frame_directory'] = str(frame_dir)
+                
+                self.logger.debug(f"📝 現在の解析統計を更新: {self.current_analysis_stats}")
 
-                # Step 2: 検出・追跡処理
+                # Step 2: 検出・追跡処理（フォールバック対応）
                 if self.depth_enabled:
                     self.logger.info("🔍 Step 2: 深度統合検出・追跡処理開始")
-                    detection_result = self.processor.run_detection_tracking_with_depth(frame_dir, video_name)
+                    if hasattr(self.processor, 'run_detection_tracking_with_depth'):
+                        detection_result = self.processor.run_detection_tracking_with_depth(frame_dir, video_name)
+                    else:
+                        self.logger.warning("深度統合処理が利用できません。標準処理にフォールバック")
+                        detection_result = self.processor.run_detection_tracking(frame_dir, video_name)
                     processing_type = "深度統合"
                 else:
                     self.logger.info("👁️ Step 2: 標準検出・追跡処理開始")
                     detection_result = self.processor.run_detection_tracking(frame_dir, video_name)
                     processing_type = "標準"
 
+                # 🔧 検出処理が失敗した場合のフォールバック
                 if not detection_result.get("success", False):
-                    error_msg = f"{processing_type}処理失敗: {detection_result.get('error', '不明なエラー')}"
-                    self.error_collector.append(error_msg)
-                    self.logger.error(f"❌ {error_msg}")
-                    raise VideoProcessingError(error_msg)
+                    error_msg = detection_result.get("error", "不明なエラー")
+                    self.logger.warning(f"⚠️ {processing_type}処理エラー: {error_msg}")
+                    
+                    # BasicVideoProcessorのフォールバック処理を試行
+                    if VIDEO_PROCESSOR_AVAILABLE and not isinstance(self.processor, BasicVideoProcessor):
+                        self.logger.info("🔄 BasicVideoProcessorにフォールバック")
+                        fallback_processor = BasicVideoProcessor(self.config)
+                        fallback_processor.load_models()
+                        detection_result = fallback_processor.run_detection_tracking(frame_dir, video_name)
+                        
+                        if detection_result.get("success", False):
+                            self.logger.info("✅ フォールバック処理成功")
+                            processing_type = "フォールバック"
+                        else:
+                            self.error_collector.append(f"{processing_type}処理失敗: {error_msg}")
+                            self.logger.error(f"❌ フォールバック処理も失敗")
+                            raise VideoProcessingError(error_msg)
+                    else:
+                        self.error_collector.append(f"{processing_type}処理失敗: {error_msg}")
+                        self.logger.error(f"❌ {error_msg}")
+                        raise VideoProcessingError(error_msg)
 
                 self.logger.info(f"✅ Step 2完了: {processing_type}処理")
 
@@ -1376,40 +1784,51 @@ if not LOGGER_AVAILABLE:
         return categories
 
     def get_video_files(self) -> List[Path]:
-        """動画ファイル取得（完全版）"""
+        """動画ファイル取得（修正版・基本推論優先）"""
         try:
+            # 🔧 --video オプションが指定された場合は、そのファイルのみ処理
+            if hasattr(sys, 'argv') and '--video' in ' '.join(sys.argv):
+                # コマンドライン引数から動画ファイルを直接取得する場合は
+                # メイン関数で処理されるので、ここでは空リストを返す
+                return []
+        
+            # 通常の動画ディレクトリ検索
             if hasattr(self.config, 'video_dir'):
                 video_dir = Path(self.config.video_dir)
             else:
                 video_dir = Path(self.config.get("video_dir", "videos"))
-                
+            
             self.logger.info(f"🎥 動画ディレクトリ検索: {video_dir}")
-                
+            
             if not video_dir.exists():
                 self.logger.warning(f"⚠️ 動画ディレクトリが存在しません: {video_dir}")
                 return []
-                
+            
             # サポートする動画形式
             video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
             video_files = []
-            
+        
             for ext in video_extensions:
                 found_files = list(video_dir.glob(f"*{ext}"))
                 found_files.extend(video_dir.glob(f"*{ext.upper()}"))
                 video_files.extend(found_files)
-                
-            video_files = sorted(set(video_files))
             
+            video_files = sorted(set(video_files))
+        
+            if not video_files:
+                self.logger.warning(f"⚠️ 動画ファイルが見つかりません: {video_dir}")
+                return []
+        
             self.logger.info(f"✅ 動画ファイル発見: {len(video_files)}個")
             for video_file in video_files:
-                self.logger.debug(f"  📹 {video_file.name} ({video_file.stat().st_size / 1024 / 1024:.1f}MB)")
-                
-            return video_files
+                file_size_mb = video_file.stat().st_size / 1024 / 1024
+                self.logger.debug(f"  📹 {video_file.name} ({file_size_mb:.1f}MB)")
             
+            return video_files
+        
         except Exception as e:
             self.logger.error(f"❌ 動画ファイル取得エラー: {e}")
             return []
-
 
 def main():
     """

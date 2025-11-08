@@ -7,7 +7,7 @@
 import logging
 import traceback
 import functools
-from typing import Dict, Any, Optional, Callable, TypeVar, Union
+from typing import Dict, Any, Optional, Callable, TypeVar, Union, List
 from datetime import datetime
 from enum import Enum
 
@@ -45,48 +45,45 @@ class ErrorSeverity(Enum):
 # ========================================
 
 class BaseYOLOError(Exception):
-    """
-    プロジェクト基底エラークラス
-    
-    全てのカスタムエラーはこれを継承します。
-    """
+    """YOLO分析エラーの基底クラス（完全互換版）"""
     
     def __init__(
-        self,
+        self, 
         message: str,
-        category: ErrorCategory = ErrorCategory.UNKNOWN,
-        severity: ErrorSeverity = ErrorSeverity.ERROR,
+        category: Optional[ErrorCategory] = None,
+        severity: Optional[ErrorSeverity] = None,
         details: Optional[Dict[str, Any]] = None,
-        original_exception: Optional[Exception] = None
+        suggestions: Optional[List[str]] = None,  # 🔧 追加
+        **kwargs  # 🔧 完全互換のため
     ):
         super().__init__(message)
         self.message = message
-        self.category = category
-        self.severity = severity
+        self.category = category or ErrorCategory.UNKNOWN
+        self.severity = severity or ErrorSeverity.ERROR
         self.details = details or {}
-        self.original_exception = original_exception
-        self.timestamp = datetime.now()
+        self.suggestions = suggestions or []  # 🔧 追加
+        self.timestamp = datetime.now().isoformat()
+        
+        # その他のkwargs対応
+        for key, value in kwargs.items():
+            if not hasattr(self, key):
+                setattr(self, key, value)
     
     def to_dict(self) -> Dict[str, Any]:
-        """エラー情報を辞書形式で返す"""
-        error_dict = {
+        """辞書形式で返却（完全版）"""
+        result = {
             "error_type": self.__class__.__name__,
             "message": self.message,
-            "category": self.category.value,
-            "severity": self.severity.value,
-            "timestamp": self.timestamp.isoformat(),
+            "category": self.category.value if hasattr(self.category, 'value') else str(self.category),
+            "severity": self.severity.value if hasattr(self.severity, 'value') else str(self.severity),
+            "timestamp": self.timestamp,
             "details": self.details
         }
         
-        if self.original_exception:
-            error_dict["original_error"] = str(self.original_exception)
-            error_dict["traceback"] = traceback.format_exception(
-                type(self.original_exception),
-                self.original_exception,
-                self.original_exception.__traceback__
-            )
-        
-        return error_dict
+        if self.suggestions:
+            result["suggestions"] = self.suggestions
+            
+        return result
 
 
 # --- 具体的なエラークラス ---
@@ -161,12 +158,14 @@ class ConfigurationError(BaseYOLOError):
 # 3. 標準化されたレスポンス形式
 # ========================================
 
+# Line 164-253の「class ResponseBuilder:」から「return ResponseBuilder.error(error)」までを置き換え
+
 class ResponseBuilder:
-    """標準化されたレスポンスを生成"""
-    
+    """統一レスポンスビルダー（全モジュール完全互換版）"""
+
     @staticmethod
-    def success(data: Any = None, message: str = "処理成功") -> Dict[str, Any]:
-        """成功レスポンス"""
+    def success(data=None, message="処理成功", **kwargs):
+        """成功レスポンス（完全互換）"""
         response = {
             "success": True,
             "message": message,
@@ -176,58 +175,201 @@ class ResponseBuilder:
         if data is not None:
             response["data"] = data
         
+        # 追加引数対応
+        for key, value in kwargs.items():
+            if key not in response:
+                response[key] = value
+        
         return response
-    
+
     @staticmethod
     def error(
-        error: Union[BaseYOLOError, Exception],
+        error=None,                           
         include_traceback: bool = True,
-        suggestions: Optional[list] = None
-    ) -> Dict[str, Any]:
-        """エラーレスポンス"""
-        
-        if isinstance(error, BaseYOLOError):
-            response = {
-                "success": False,
-                "error": error.to_dict()
-            }
-        else:
-            # 標準的なExceptionの場合
+        suggestions=None,
+        message=None,                         # 🔧 yolopose_analyzer用
+        details=None,                         # 🔧 yolopose_analyzer用
+        exception=None,                       # 🔧 後方互換性
+        **kwargs                              # 🔧 完全互換のため
+    ):
+        """エラーレスポンス（全モジュール完全互換API）"""
+    
+        # 引数の正規化（複数のパターンに対応）
+        target_error = error or exception
+    
+        if message:
+            # messageが直接指定された場合（yolopose_analyzer用）
             response = {
                 "success": False,
                 "error": {
-                    "error_type": type(error).__name__,
-                    "message": str(error),
+                    "error_type": "CustomError",
+                    "message": message,
                     "category": ErrorCategory.UNKNOWN.value,
                     "severity": ErrorSeverity.ERROR.value,
                     "timestamp": datetime.now().isoformat()
                 }
             }
-            
+        elif isinstance(target_error, BaseYOLOError):
+            # BaseYOLOErrorの場合
+            response = {
+                "success": False,
+                "error": target_error.to_dict()
+            }
+        elif isinstance(target_error, Exception):
+            # 標準Exceptionの場合
+            response = {
+                "success": False,
+                "error": {
+                   "error_type": type(target_error).__name__,
+                    "message": str(target_error),
+                    "category": ErrorCategory.UNKNOWN.value,
+                    "severity": ErrorSeverity.ERROR.value,
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+        
             if include_traceback:
                 response["error"]["traceback"] = traceback.format_exc()
-        
+        elif isinstance(target_error, str):
+            # 文字列エラーの場合
+            response = {
+                "success": False,
+                "error": {
+                    "error_type": "StringError",
+                    "message": target_error,
+                    "category": ErrorCategory.UNKNOWN.value, 
+                    "severity": ErrorSeverity.ERROR.value,
+                   "timestamp": datetime.now().isoformat()
+                }
+            }
+        else:
+            # フォールバック
+            response = {
+                "success": False,
+                "error": {
+                    "error_type": "UnknownError",
+                    "message": "不明なエラーが発生しました",
+                    "category": ErrorCategory.UNKNOWN.value,
+                    "severity": ErrorSeverity.ERROR.value,
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+    
+        # suggestions追加
         if suggestions:
             response["suggestions"] = suggestions
         
+        # details追加（重要！）
+        if details:
+            response["details"] = details
+        
+        # その他のkwargs対応
+        for key, value in kwargs.items():
+            if key not in response:
+                response[key] = value
+        
         return response
-    
+
     @staticmethod
-    def validation_error(
-        field: str,
-        message: str,
-        value: Any = None
-    ) -> Dict[str, Any]:
-        """検証エラー（特化版）"""
+    def validation_error(field=None, message=None, value=None, details=None, **kwargs):
+        """バリデーションエラー（全モジュール完全互換）"""
+        
+        # メッセージの決定
+        if message:
+            error_message = message
+        elif field:
+            error_message = f"検証エラー: {field}"
+        else:
+            error_message = "検証エラー"
+        
+        # BaseYOLOErrorインスタンスを作成
         error = ValidationError(
-            message=f"検証エラー: {field}",
+            message=error_message,
             details={
                 "field": field,
-                "message": message,
+                "message": message or error_message,
                 "value": value
             }
         )
-        return ResponseBuilder.error(error)
+        
+        # details引数のサポート（重要！）
+        if details:
+            error.details.update(details)
+        
+        # ResponseBuilder.errorを使用して統一フォーマット
+        response = ResponseBuilder.error(error)
+        
+        # その他のkwargs対応
+        for key, value in kwargs.items():
+            if key not in response:
+                response[key] = value
+            
+        return response
+
+    @staticmethod  
+    def processing_error(step=None, message=None, details=None, **kwargs):
+        """処理エラー（全モジュール完全互換）"""
+        error_message = message or f"処理エラー: {step}"
+        error = BaseYOLOError(
+            message=error_message,
+            category=ErrorCategory.PROCESSING,
+            severity=ErrorSeverity.ERROR,
+            details={"step": step}
+        )
+        
+        if details:
+            error.details.update(details)
+            
+        response = ResponseBuilder.error(error)
+        
+        # その他のkwargs対応
+        for key, value in kwargs.items():
+            if key not in response:
+                response[key] = value
+            
+        return response
+
+    @staticmethod
+    def configuration_error(config_key=None, message=None, details=None, **kwargs):
+        """設定エラー（全モジュール完全互換）"""
+        error_message = message or f"設定エラー: {config_key}"
+        error = ConfigurationError(
+            message=error_message,
+            details={"config_key": config_key}
+        )
+        
+        if details:
+            error.details.update(details)
+            
+        response = ResponseBuilder.error(error)
+        
+        # その他のkwargs対応
+        for key, value in kwargs.items():
+            if key not in response:
+                response[key] = value
+            
+        return response
+
+    @staticmethod
+    def model_error(model_path=None, message=None, details=None, **kwargs):
+        """モデルエラー（全モジュール完全互換）"""
+        error_message = message or f"モデルエラー: {model_path}"
+        error = ModelInitializationError(
+            message=error_message,
+            details={"model_path": model_path}
+        )
+        
+        if details:
+            error.details.update(details)
+            
+        response = ResponseBuilder.error(error)
+        
+        # その他のkwargs対応  
+        for key, value in kwargs.items():
+            if key not in response:
+                response[key] = value
+            
+        return response
 
 
 # ========================================
