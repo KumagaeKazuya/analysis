@@ -11,8 +11,9 @@ processing:
     overlap_ratio: 0.2
 
 models:
-  pose: "models/yolo/yolo11m-pose.pt"    # Medium ポーズモデル（デフォルト）
-  detection: "models/yolo/yolo11m.pt"    # Medium 検出モデル（デフォルト）
+  detection: "yolo11m.pt"        # 自動ダウンロード対応
+  pose: "yolo11m-pose.pt"       # 自動ダウンロード対応
+  depth: "models/depth/DPT_Large.pt"
 
   # 利用可能なモデル（コメントアウト）
   # Nano (高速):     yolo11n.pt, yolo11n-pose.pt
