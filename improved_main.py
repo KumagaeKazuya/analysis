@@ -534,8 +534,8 @@ if not VIDEO_PROCESSOR_AVAILABLE:
                 else:
                     models_config = {}
                 
-                detection_path = models_config.get('detection', 'models/yolo/yolo11m.pt')
-                pose_path = models_config.get('pose', 'models/yolo/yolo11m-pose.pt')
+                detection_path = models_config.get('detection', 'models/yolo/yolo11x.pt')
+                pose_path = models_config.get('pose', 'models/yolo/yolo11x-pose.pt')
                 
                 self.logger.info(f"🔍 モデルロード開始")
                 
@@ -1120,8 +1120,8 @@ if not CONFIG_AVAILABLE:
             # デフォルト設定（完全版）
             default_config = {
                 "models": {
-                    "detection": "models/yolo/yolo11m.pt",
-                    "pose": "models/yolo/yolo11m-pose.pt"
+                    "detection": "models/yolo/yolo11x.pt",
+                    "pose": "models/yolo/yolo11x-pose.pt"
                 },
                 "processing": {
                     "detection": {

@@ -244,8 +244,8 @@ def create_model_info(models_dir: Path, models_config: Dict[str, Dict[str, str]]
             "download_date": time.strftime("%Y-%m-%d %H:%M:%S"),
             "models": {},
             "default_models": {
-                "detection": "yolo11m.pt",
-                "pose": "yolo11m-pose.pt"
+                "detection": "yolo11x.pt",
+                "pose": "yolo11x-pose.pt"
             },
             "model_hierarchy": {
                 "nano": ["yolo11n.pt", "yolo11n-pose.pt"],
@@ -382,15 +382,15 @@ processing:
     overlap_ratio: 0.2
 
 models:
-  pose: "models/yolo/yolo11m-pose.pt"    # Medium ポーズモデル（デフォルト）
-  detection: "models/yolo/yolo11m.pt"    # Medium 検出モデル（デフォルト）
+  pose: "models/yolo/yolo11x-pose.pt"    # Medium ポーズモデル（デフォルト）
+  detection: "models/yolo/yolo11x.pt"    # Medium 検出モデル（デフォルト）
 
   # 利用可能なモデル（コメントアウト）
   # Nano (高速):     yolo11n.pt, yolo11n-pose.pt
   # Small (バランス): yolo11s.pt, yolo11s-pose.pt  
-  # Medium (高精度):  yolo11m.pt, yolo11m-pose.pt ← 現在使用中
+  # Medium (高精度):  yolo11m.pt, yolo11m-pose.pt 
   # Large (より高精度): yolo11l.pt, yolo11l-pose.pt
-  # XLarge (最高精度): yolo11x.pt, yolo11x-pose.pt
+  # XLarge (最高精度): yolo11x.pt, yolo11x-pose.pt ← 現在使用中
 
 video_dir: "videos"
 output_dir: "outputs"

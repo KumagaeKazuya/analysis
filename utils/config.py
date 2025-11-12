@@ -350,12 +350,12 @@ class Config:
 
     @property
     def detection_model(self) -> str:
-        model_file = self.get('models.detection', 'yolo11n.pt')
+        model_file = self.get('models.detection', 'yolo11x.pt')
         return os.path.join(self.model_dir, model_file)
 
     @property
     def pose_model(self) -> str:
-        model_file = self.get('models.pose', 'yolo11n-pose.pt')
+        model_file = self.get('models.pose', 'yolo11x-pose.pt')
         return os.path.join(self.model_dir, model_file)
 
     @property

@@ -1,37 +1,299 @@
-# YOLO11 基本設定ファイル（Mediumモデル仕様）
+# YOLO11 広角カメラ分析システム設定（完全版：XLarge + 4点キーポイント + 安定化）
+
+# ====================================================================
+# 🎯 メイン処理設定
+# ====================================================================
 processing:
+  # 🔍 深度推定設定
   depth_estimation:
-    enabled: false
+    enabled: false                    # 深度推定の有効/無効
+    model_type: "DPT_Large"          # 深度推定モデル種類
+    
+  # 👁️ 検出・認識設定（修正版）
   detection:
-    confidence_threshold: 0.3
-    iou_threshold: 0.45
-    save_visualizations: true          # 🆕 追加
-    save_detection_frames: true        # 🆕 追加
-    max_detections: 1000
+    confidence_threshold: 0.6         # ⚡ 信頼度閾値（0.3→0.6で高精度化）
+    iou_threshold: 0.7               # ⚡ IoU閾値（0.45→0.7で重複削減）
+    max_detections: 20               # ⚡ 最大検出数（50→20で人数制限）
+    save_visualizations: true        # 可視化結果保存
+    save_detection_frames: true      # 検出枠付きフレーム保存
+    save_raw_detections: true        # 生検出データ保存
+
+  # 🦴 4点キーポイント設定（メイン機能）
+  use_4point_keypoints: true         # 4点キーポイントモード有効化
+  keypoint_confidence_threshold: 0.5  # キーポイント信頼度閾値
+  enable_shoulder_metrics: true       # 肩幅解析有効化
+  enable_head_tracking: true         # 頭部追跡有効化
+  
+  # 🔧 キーポイント処理ロジック（新規追加）
+  keypoint_processing:
+    filter_low_confidence: true       # 低信頼度フィルタ
+    interpolate_missing: false       # 欠損補間（無効推奨）
+    validate_geometry: true          # 幾何学的検証
+    min_keypoint_distance: 10        # 最小キーポイント間距離
+    max_keypoint_distance: 500       # 最大キーポイント間距離
+  
+  # 🎯 ポーズ推定設定
+  pose:
+    keypoint_threshold: 0.5          # ポーズキーポイント信頼度
+    use_4points_only: true           # 4点のみ使用（17点→4点）
+    target_keypoints:                # 対象キーポイント定義
+      - "left_ear"                   # 左耳（インデックス3）
+      - "right_ear"                  # 右耳（インデックス4）
+      - "left_shoulder"              # 左肩（インデックス5）
+      - "right_shoulder"             # 右肩（インデックス6）
+    min_visible_points: 3            # 最小可視点数（4点中3点以上）
+    
+  # 🔄 トラッキング設定（ID安定化）
+  tracking:
+    enabled: true                    # トラッキング有効化
+    min_hits: 5                      # 安定ID認定フレーム数（5フレーム連続）
+    max_age: 30                      # トラッキング継続フレーム数
+    iou_threshold: 0.3               # トラッキング用IoU閾値
+    use_kalman_filter: true          # カルマンフィルター使用
+    smooth_trajectory: true          # 軌道平滑化
+
+  # 🎯 安定化トラッキング詳細設定（新規追加）
+  stable_tracking:
+    consecutive_frames_required: 5    # 連続検出必須フレーム数
+    confidence_decay: 0.95           # 信頼度減衰率
+    position_smoothing: true         # 位置平滑化
+    velocity_prediction: true        # 速度予測
+    occlusion_handling: true         # オクルージョン対応
+
+  # 🖼️ タイル推論設定（大画面対応）
   tile_inference:
-    enabled: false
-    tile_size: [640, 640]
-    overlap_ratio: 0.2
+    enabled: false                   # タイル推論の有効/無効
+    tile_size: [640, 640]           # タイルサイズ
+    overlap_ratio: 0.2              # タイル重複率
 
-# 🆕 新セクション追加
+  # 🔧 メモリ・パフォーマンス設定（修正版）
+  performance:
+    batch_size: 8                    # バッチサイズ
+    use_gpu: true                    # GPU使用
+    memory_limit: 2048               # メモリ制限（MB）
+    enable_memory_cleanup: true      # メモリクリーンアップ
+    optimization_level: "high"       # 最適化レベル
+
+# ====================================================================
+# 🎨 可視化・出力設定
+# ====================================================================
 visualization:
-  save_visualizations: true
-  save_annotated_frames: true
-  output_format: "jpg"
-  create_summary_plots: true
-  save_intermediate_results: true
+  # 📊 基本可視化設定
+  save_visualizations: true         # 可視化結果保存
+  save_annotated_frames: true       # 注釈付きフレーム保存
+  output_format: "jpg"              # 出力画像形式（jpg/png）
+  create_summary_plots: true        # サマリープロット作成
+  save_intermediate_results: true   # 中間結果保存
+  
+  # 🎯 4点キーポイント可視化設定
+  keypoint_visualization:
+    show_keypoints: true             # キーポイント表示
+    show_connections: true           # 接続線表示
+    keypoint_radius: 4               # ⚡ キーポイント半径（大きく）
+    connection_thickness: 3          # ⚡ 接続線太さ（太く）
+    show_confidence: true            # 信頼度表示
+    highlight_stable_ids: true       # ⚡ 安定ID強調表示
+    
+  # 📦 バウンディングボックス設定
+  bbox_visualization:
+    show_bbox: true                  # バウンディングボックス表示
+    bbox_thickness: 2                # 枠線太さ
+    show_id: true                    # ID表示
+    show_confidence: true            # 信頼度表示
+    color_by_id: true               # ID別色分け
+    stable_id_color: [0, 255, 0]    # ⚡ 安定ID専用色（緑）
+    
+  # 📈 メトリクス可視化設定
+  metrics_visualization:
+    show_shoulder_width: true        # 肩幅表示
+    show_head_direction: true        # 頭部方向表示
+    show_movement_trail: true        # 移動軌跡表示
+    trail_length: 10                 # 軌跡長さ
+    show_quality_score: true         # ⚡ 品質スコア表示
+    
+  # 🎬 動画出力設定
+  video_output:
+    create_output_video: true        # 出力動画作成
+    fps: 30                          # フレームレート
+    codec: "mp4v"                   # コーデック
+    quality: "high"                  # 品質設定
 
+# ====================================================================
+# 🤖 モデル設定
+# ====================================================================
 models:
-  detection: "yolo11m.pt"        # 自動ダウンロード対応
-  pose: "yolo11m-pose.pt"       # 自動ダウンロード対応
-  depth: "models/depth/DPT_Large.pt"
+  # 🎯 メインモデル（XLarge仕様）
+  detection: "models/yolo/yolo11x.pt"        # XLarge検出モデル（最高精度）
+  pose: "models/yolo/yolo11x-pose.pt"        # XLargeポーズモデル（最高精度）
+  depth: "models/depth/DPT_Large.pt"         # 深度推定モデル
+  
+  # 📋 モデル設定
+  auto_download: true                        # 自動ダウンロード
+  model_cache_dir: "models/yolo"            # モデルキャッシュディレクトリ
+  
+  # ⚡ モデル最適化設定（新規追加）
+  optimization:
+    use_tensorrt: false             # TensorRT最適化（Linuxのみ）
+    use_openvino: false            # OpenVINO最適化
+    half_precision: false          # 半精度推論（Apple Silicon非推奨）
 
-  # 利用可能なモデル（コメントアウト）
-  # Nano (高速):     yolo11n.pt, yolo11n-pose.pt
-  # Small (バランス): yolo11s.pt, yolo11s-pose.pt  
-  # Medium (高精度):  yolo11m.pt, yolo11m-pose.pt ← 現在使用中
-  # Large (より高精度): yolo11l.pt, yolo11l-pose.pt
-  # XLarge (最高精度): yolo11x.pt, yolo11x-pose.pt
+# ====================================================================
+# 📁 入出力ディレクトリ設定
+# ====================================================================
+# 🎥 入力設定
+video_dir: "videos"                          # 動画入力ディレクトリ
+supported_formats:                          # サポート動画形式
+  - ".mp4"
+  - ".avi"
+  - ".mov"
+  - ".mkv"
 
-video_dir: "videos"
-output_dir: "outputs"
+# 📂 出力設定  
+output_dir: "outputs"                        # メイン出力ディレクトリ
+output_structure:                            # 出力ディレクトリ構造
+  baseline: "outputs/baseline"               # ベースライン結果
+  experiments: "outputs/experiments"         # 実験結果
+  reports: "outputs/reports"                # レポート出力
+  logs: "outputs/logs"                      # ログファイル
+  temp: "outputs/temp"                      # 一時ファイル
+  stable_results: "outputs/stable"          # ⚡ 安定化結果専用
+
+# ====================================================================
+# 📊 評価・解析設定
+# ====================================================================
+evaluation:
+  # 🎯 基本評価設定
+  enable_comprehensive_evaluation: true      # 包括的評価有効化
+  enable_quality_metrics: true              # 品質メトリクス
+  enable_spatial_analysis: true             # 空間解析
+  enable_temporal_analysis: true            # 時系列解析
+  
+  # 🦴 4点キーポイント専用評価
+  keypoint_evaluation:
+    calculate_shoulder_width: true           # 肩幅計算
+    calculate_head_direction: true          # 頭部方向計算
+    track_posture_changes: true             # 姿勢変化追跡
+    analyze_group_dynamics: true            # グループ動態解析
+    
+  # 📈 メトリクス設定
+  metrics:
+    detection_accuracy: true                # 検出精度
+    tracking_stability: true               # トラッキング安定性
+    keypoint_quality: true                 # キーポイント品質
+    temporal_consistency: true             # 時間的一貫性
+    id_consistency: true                   # ⚡ ID一貫性評価
+
+# ====================================================================
+# 🔧 システム設定（強化版）
+# ====================================================================
+system:
+  # 💾 ログ設定
+  logging:
+    level: "INFO"                          # ログレベル（DEBUG/INFO/WARNING/ERROR）
+    save_to_file: true                     # ファイル保存
+    max_log_size: "10MB"                   # 最大ログサイズ
+    backup_count: 5                        # バックアップ数
+    
+  # 🚨 エラーハンドリング設定
+  error_handling:
+    continue_on_error: true                # エラー時継続
+    save_error_frames: true                # エラーフレーム保存
+    detailed_error_log: true               # 詳細エラーログ
+    
+  # ⚡ パフォーマンス設定
+  performance:
+    enable_multiprocessing: false          # マルチプロセス（Mac推奨：false）
+    max_workers: 4                         # 最大ワーカー数
+    memory_monitor: true                   # メモリ監視
+    progress_updates: true                 # 進捗更新
+
+  # 🍎 GPU/MPS設定（新規追加）
+  gpu_settings:
+    prefer_mps: true                       # Apple Silicon GPU優先
+    fallback_to_cpu: true                  # CPU フォールバック
+    memory_fraction: 0.8                   # GPU メモリ使用率
+    enable_mixed_precision: false          # 混合精度（Apple Silicon非推奨）
+
+# ====================================================================
+# 🔄 4点キーポイント詳細設定（完全版）
+# ====================================================================
+four_point_keypoints:
+  # 🎯 キーポイント定義
+  target_points:
+    left_ear: 3                          # 左耳（COCOインデックス）
+    right_ear: 4                         # 右耳（COCOインデックス）
+    left_shoulder: 5                     # 左肩（COCOインデックス）
+    right_shoulder: 6                    # 右肩（COCOインデックス）
+    
+  # 📏 解析設定
+  analysis:
+    calculate_ear_distance: true         # 耳間距離計算
+    calculate_shoulder_width: true       # 肩幅計算
+    estimate_head_direction: true        # 頭部方向推定
+    track_orientation_changes: true      # 向き変化追跡
+    analyze_symmetry: true               # ⚡ 左右対称性解析
+    
+  # 🎨 可視化カスタマイズ
+  visualization_colors:
+    left_ear: [255, 0, 0]               # 赤色
+    right_ear: [0, 255, 0]              # 緑色
+    left_shoulder: [0, 0, 255]          # 青色
+    right_shoulder: [255, 255, 0]       # 黄色
+    connections: [255, 255, 255]        # 白色（接続線）
+    stable_connection: [0, 255, 0]      # ⚡ 安定接続線（緑）
+    
+  # ✅ 品質制御設定（強化版）
+  quality_control:
+    min_ear_confidence: 0.6             # ⚡ 最小耳信頼度（0.5→0.6）
+    min_shoulder_confidence: 0.7        # ⚡ 最小肩信頼度（0.6→0.7）
+    max_ear_distance: 200               # 最大耳間距離（ピクセル）
+    min_shoulder_width: 50              # 最小肩幅（ピクセル）
+    max_shoulder_width: 300             # 最大肩幅（ピクセル）
+    symmetry_threshold: 0.3             # ⚡ 左右対称性閾値
+    temporal_consistency_threshold: 0.8  # ⚡ 時間一貫性閾値
+
+# ====================================================================
+# 📝 メタデータ設定
+# ====================================================================
+metadata:
+  version: "2.1"                          # ⚡ バージョンアップ（2.0→2.1）
+  created: "2025-11-12"                   # 作成日
+  description: "完全版：4点キーポイント+安定化トラッキング+最適化設定"
+  author: "YOLO11 Analysis System"
+  model_priority: "XLarge"                # モデル優先度
+
+# ====================================================================
+# 🎯 実験・研究設定
+# ====================================================================
+experimental:
+  # 🔬 研究機能設定
+  enable_advanced_analytics: false        # 高度解析（開発中）
+  save_raw_data: true                     # 生データ保存
+  export_to_research_format: false       # 研究用フォーマット出力
+  
+  # 📊 比較分析設定
+  comparative_analysis:
+    compare_with_baseline: true          # ⚡ ベースライン比較（有効化）
+    multiple_model_comparison: false      # 複数モデル比較
+    temporal_comparison: true            # ⚡ 時系列比較（有効化）
+
+# ====================================================================
+# 🚀 追加機能設定（新規）
+# ====================================================================
+advanced_features:
+  # 🔄 リアルタイム処理
+  realtime:
+    enable_realtime_preview: false      # リアルタイムプレビュー
+    preview_fps: 15                     # プレビューFPS
+    
+  # 📊 統計解析
+  statistics:
+    generate_reports: true              # レポート生成
+    export_statistics: true             # 統計エクスポート
+    create_heatmaps: false             # ヒートマップ作成
+    
+  # 🎯 品質管理
+  quality_assurance:
+    auto_quality_check: true           # 自動品質チェック
+    reject_low_quality: true           # 低品質検出除外
+    quality_threshold: 0.7             # 品質閾値
