@@ -5,10 +5,21 @@ processing:
   detection:
     confidence_threshold: 0.3
     iou_threshold: 0.45
+    save_visualizations: true          # 🆕 追加
+    save_detection_frames: true        # 🆕 追加
+    max_detections: 1000
   tile_inference:
     enabled: false
     tile_size: [640, 640]
     overlap_ratio: 0.2
+
+# 🆕 新セクション追加
+visualization:
+  save_visualizations: true
+  save_annotated_frames: true
+  output_format: "jpg"
+  create_summary_plots: true
+  save_intermediate_results: true
 
 models:
   detection: "yolo11m.pt"        # 自動ダウンロード対応
