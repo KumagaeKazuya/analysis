@@ -123,13 +123,13 @@ visualization:
 # ====================================================================
 models:
   # 🎯 メインモデル（XLarge仕様）
-  detection: "models/yolo/yolo11x.pt"        # XLarge検出モデル（最高精度）
-  pose: "models/yolo/yolo11x-pose.pt"        # XLargeポーズモデル（最高精度）
+  detection: "models/yolo11x.pt"        # XLarge検出モデル（最高精度）
+  pose: "models/yolo11x-pose.pt"        # XLargeポーズモデル（最高精度）
   depth: "models/depth/DPT_Large.pt"         # 深度推定モデル
   
   # 📋 モデル設定
   auto_download: true                        # 自動ダウンロード
-  model_cache_dir: "models/yolo"            # モデルキャッシュディレクトリ
+  model_cache_dir: "models"            # モデルキャッシュディレクトリ
   
   # ⚡ モデル最適化設定（新規追加）
   optimization:
