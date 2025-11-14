@@ -787,6 +787,8 @@ class VideoProcessor:
                     original_exception=e
                 )
 
+    # Line 815-860の_run_normal_inferenceメソッドを以下に置換:
+
     @handle_errors(logger=logger, error_category=ErrorCategory.PROCESSING)
     def _run_normal_inference(
         self,
@@ -796,7 +798,7 @@ class VideoProcessor:
         config: Dict
     ) -> Dict[str, Any]:
         """
-        通常推論実行（統一エラーハンドリング対応版）
+        通常推論実行（モデルパス修正版）
 
         Args:
             frame_dir: フレームディレクトリ
@@ -809,14 +811,26 @@ class VideoProcessor:
         """
         with ErrorContext("通常推論", logger=self.logger) as ctx:
             try:
+                # ⚡ モデルパス取得・修正
+                models_config = self.config.get('models', {}) if hasattr(self.config, 'get') else {}
+                pose_model_path = models_config.get('pose', 'models/yolo11x-pose.pt')
+                
+                # パス重複修正
+                if pose_model_path.startswith('models/models/'):
+                    pose_model_path = pose_model_path.replace('models/models/', 'models/')
+                
+                self.logger.info(f"🎯 使用モデル: {pose_model_path}")
+                ctx.add_info("model_path", pose_model_path)
+                
                 from yolopose_analyzer import analyze_frames_with_tracking_memory_efficient
 
                 ctx.add_info("inference_type", "normal")
 
+                # ⚡ 修正済みパスを明示的に渡す
                 result = analyze_frames_with_tracking_memory_efficient(
                     str(frame_dir),
                     str(result_dir),
-                    model_path=config["model_path"],
+                    model_path=pose_model_path,  # ⚡ 修正済みパスを使用
                     config=config
                 )
 

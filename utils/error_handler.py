@@ -184,90 +184,97 @@ class ResponseBuilder:
 
     @staticmethod
     def error(
-        error=None,                           
+        error=None,
         include_traceback: bool = True,
         suggestions=None,
         message=None,                         # 🔧 yolopose_analyzer用
         details=None,                         # 🔧 yolopose_analyzer用
         exception=None,                       # 🔧 後方互換性
+        original_exception=None,              # 🔧 core.py用
         **kwargs                              # 🔧 完全互換のため
     ):
-        """エラーレスポンス（全モジュール完全互換API）"""
-    
+        """エラーレスポンス（完全互換API・修正版）"""
+
         # 引数の正規化（複数のパターンに対応）
-        target_error = error or exception
-    
+        target_error = error or exception or original_exception
+
         if message:
             # messageが直接指定された場合（yolopose_analyzer用）
             response = {
                 "success": False,
                 "error": {
                     "error_type": "CustomError",
-                    "message": message,
-                    "category": ErrorCategory.UNKNOWN.value,
-                    "severity": ErrorSeverity.ERROR.value,
-                    "timestamp": datetime.now().isoformat()
-                }
-            }
-        elif isinstance(target_error, BaseYOLOError):
-            # BaseYOLOErrorの場合
-            response = {
-                "success": False,
-                "error": target_error.to_dict()
-            }
-        elif isinstance(target_error, Exception):
-            # 標準Exceptionの場合
-            response = {
-                "success": False,
-                "error": {
-                   "error_type": type(target_error).__name__,
-                    "message": str(target_error),
-                    "category": ErrorCategory.UNKNOWN.value,
-                    "severity": ErrorSeverity.ERROR.value,
+                    "message": str(message),
+                    "category": "unknown",
+                    "severity": "error",
                     "timestamp": datetime.now().isoformat()
                 }
             }
         
-            if include_traceback:
-                response["error"]["traceback"] = traceback.format_exc()
-        elif isinstance(target_error, str):
-            # 文字列エラーの場合
-            response = {
-                "success": False,
-                "error": {
-                    "error_type": "StringError",
-                    "message": target_error,
-                    "category": ErrorCategory.UNKNOWN.value, 
-                    "severity": ErrorSeverity.ERROR.value,
-                   "timestamp": datetime.now().isoformat()
+            if details:
+                response["error"]["details"] = details
+            
+        elif target_error:
+            # エラーオブジェクトが指定された場合
+            if isinstance(target_error, BaseYOLOError):
+                # カスタムエラーの場合
+                response = {
+                    "success": False,
+                    "error": {
+                        "error_type": target_error.__class__.__name__,
+                        "message": str(target_error.message),
+                        "category": target_error.category.value if hasattr(target_error.category, 'value') else str(target_error.category),
+                        "severity": target_error.severity.value if hasattr(target_error.severity, 'value') else str(target_error.severity),
+                        "timestamp": target_error.timestamp,
+                        "details": target_error.details
+                    }
                 }
-            }
+            
+                if hasattr(target_error, 'suggestions') and target_error.suggestions:
+                    response["error"]["suggestions"] = target_error.suggestions
+                
+            else:
+                # 標準例外の場合
+                response = {
+                    "success": False,
+                    "error": {
+                        "error_type": target_error.__class__.__name__,
+                        "message": str(target_error),
+                        "category": "unknown", 
+                        "severity": "error",
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+            
+                if include_traceback:
+                    response["error"]["traceback"] = traceback.format_exc()
+                
+                if details:
+                    response["error"]["details"] = details
         else:
-            # フォールバック
+            # エラーオブジェクトがない場合のデフォルト
             response = {
                 "success": False,
                 "error": {
                     "error_type": "UnknownError",
-                    "message": "不明なエラーが発生しました",
-                    "category": ErrorCategory.UNKNOWN.value,
-                    "severity": ErrorSeverity.ERROR.value,
+                    "message": "予期しないエラーが発生しました",
+                    "category": "unknown",
+                    "severity": "error", 
                     "timestamp": datetime.now().isoformat()
                 }
             }
-    
-        # suggestions追加
+
+        # suggestions の追加
         if suggestions:
-            response["suggestions"] = suggestions
-        
-        # details追加（重要！）
-        if details:
-            response["details"] = details
-        
-        # その他のkwargs対応
+            response["error"]["suggestions"] = suggestions
+
+        # その他のkwargsを追加
         for key, value in kwargs.items():
             if key not in response:
                 response[key] = value
-        
+            elif key not in response.get("error", {}):
+                response["error"][key] = value
+
         return response
 
     @staticmethod

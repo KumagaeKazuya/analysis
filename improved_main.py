@@ -24,6 +24,7 @@ from typing import Dict, Any, Optional, List
 import time
 from datetime import datetime  # 🔧 追加
 import traceback
+import platform
 
 # 🔧 条件付きインポート - 必須ライブラリ
 try:
@@ -62,6 +63,17 @@ except ImportError as e:
     print(f"⚠️ 統一エラーハンドラーが見つかりません: {e}")
     print("🔧 基本エラーハンドリングを使用します")
     ERROR_HANDLER_AVAILABLE = False
+
+# 🔧 条件付きインポート - yolopose_analyzer（XLargeモデル確実使用版）
+YOLOPOSE_ANALYZER_AVAILABLE = False
+
+try:
+    from yolopose_analyzer import analyze_frames_with_tracking_enhanced
+    YOLOPOSE_ANALYZER_AVAILABLE = True
+    print("✅ yolopose_analyzer が利用可能です")
+except ImportError as e:
+    print(f"⚠️ yolopose_analyzer が見つかりません: {e}")
+    YOLOPOSE_ANALYZER_AVAILABLE = False
     
     # 🔧 基本エラーハンドリングクラス（完全版）
     class BaseYOLOError(Exception):
@@ -525,7 +537,7 @@ if not VIDEO_PROCESSOR_AVAILABLE:
             self.logger.info(f"🎬 基本動画プロセッサー初期化完了")
         
         def load_models(self):
-            """モデルロード（改善版）"""
+            """モデルロード（パス重複修正版）"""
             try:
                 if hasattr(self.config, 'get'):
                     models_config = self.config.get('models', {})
@@ -534,10 +546,19 @@ if not VIDEO_PROCESSOR_AVAILABLE:
                 else:
                     models_config = {}
                 
-                detection_path = models_config.get('detection', 'models/yolo/yolo11x.pt')
-                pose_path = models_config.get('pose', 'models/yolo/yolo11x-pose.pt')
+                # ⚡ パス重複を防ぐ修正
+                detection_path = models_config.get('detection', 'models/yolo11x.pt')
+                pose_path = models_config.get('pose', 'models/yolo11x-pose.pt')
+                
+                # パス重複チェック
+                if detection_path.startswith('models/models/'):
+                    detection_path = detection_path.replace('models/models/', 'models/')
+                if pose_path.startswith('models/models/'):
+                    pose_path = pose_path.replace('models/models/', 'models/')
                 
                 self.logger.info(f"🔍 モデルロード開始")
+                self.logger.info(f"📊 検出モデルパス: {detection_path}")
+                self.logger.info(f"📊 ポーズモデルパス: {pose_path}")
                 
                 # 検出モデル
                 if Path(detection_path).exists():
@@ -545,16 +566,25 @@ if not VIDEO_PROCESSOR_AVAILABLE:
                     self.logger.info(f"✅ 検出モデル: {detection_path}")
                 else:
                     self.logger.warning(f"⚠️ 検出モデル未発見: {detection_path}")
-                
+                    # フォールバック: 自動ダウンロード
+                    self.detection_model = YOLO('yolo11x.pt')
+                    self.logger.info("✅ 検出モデル: 自動ダウンロード")
+
                 # ポーズモデル
                 if Path(pose_path).exists():
                     self.pose_model = YOLO(pose_path)
                     self.logger.info(f"✅ ポーズモデル: {pose_path}")
                 else:
                     self.logger.warning(f"⚠️ ポーズモデル未発見: {pose_path}")
-                    
+                    # フォールバック: 自動ダウンロード
+                    self.pose_model = YOLO('yolo11x-pose.pt')
+                    self.logger.info("✅ ポーズモデル: 自動ダウンロード")
+                
+                self.logger.info("✅ 全モデルロード完了")
+                
             except Exception as e:
                 self.logger.error(f"❌ モデルロードエラー: {e}")
+                raise
         
         # BasicVideoProcessor の extract_frames メソッドを修正:
 
@@ -851,11 +881,13 @@ if not METRICS_ANALYZER_AVAILABLE:
         
         # Line 845付近の create_visualizations メソッドを完全置換:
 
+        # Line 874付近のcreate_visualizationsメソッドを以下で完全置換:
+
         def create_visualizations(self, detection_results, vis_dir):
             """基本可視化（完全版・確実な戻り値付き）"""
             self.logger.info(f"📈 基本可視化生成: {vis_dir}")
     
-            # 🔧 必ず戻り値を返すようにする
+            # 🔧 必ず戻り値を返すようにする（初期化）
             result = {
                 "success": False,
                 "error": "初期化エラー",
@@ -876,6 +908,7 @@ if not METRICS_ANALYZER_AVAILABLE:
         
                 # detection_results の詳細ログ
                 self.logger.info(f"🔧 detection_results type: {type(detection_results)}")
+                self.logger.info(f"🔧 detection_results content: {detection_results}")
         
                 # CSVパス抽出
                 csv_path = None
@@ -910,11 +943,16 @@ if not METRICS_ANALYZER_AVAILABLE:
                     json.dump(basic_stats, f, indent=2, ensure_ascii=False)
                 self.logger.info(f"✅ 基本統計保存: {stats_file}")
         
-                # 戻り値更新
-                result["basic_stats_file"] = str(stats_file)
-                result["total_files"] = 1
+                # 戻り値更新（重要！）
+                result.update({
+                    "success": True,
+                    "error": None,
+                    "basic_stats_file": str(stats_file),
+                    "total_files": 1,
+                    "graphs_generated": 0
+                })
         
-                # 統計グラフ生成
+                # 統計グラフ生成（オプション）
                 graphs_generated = 0
         
                 try:
@@ -926,7 +964,7 @@ if not METRICS_ANALYZER_AVAILABLE:
             
                     # 簡易フォント設定
                     try:
-                        plt.rcParams['font.family'] = 'Hiragino Sans'
+                        plt.rcParams['font.family'] = ['Hiragino Sans', 'DejaVu Sans']
                     except:
                         plt.rcParams['font.family'] = 'DejaVu Sans'
             
@@ -938,10 +976,11 @@ if not METRICS_ANALYZER_AVAILABLE:
                 
                         if not df.empty:
                             # 1. フレーム別検出数グラフ
-                            if 'frame' in df.columns:
+                            if 'frame' in df.columns or 'frame_id' in df.columns:
                                 try:
+                                    frame_col = 'frame' if 'frame' in df.columns else 'frame_id'
                                     plt.figure(figsize=(12, 6))
-                                    frame_counts = df['frame'].value_counts().sort_index()
+                                    frame_counts = df[frame_col].value_counts().sort_index()
                                     plt.plot(frame_counts.index, frame_counts.values, 
                                     marker='o', linewidth=2, markersize=4, color='blue')
                                     plt.title('Detection Count by Frame', fontsize=16, pad=20)
@@ -959,10 +998,11 @@ if not METRICS_ANALYZER_AVAILABLE:
                                     self.logger.error(f"❌ 時系列グラフエラー: {e}")
                     
                             # 2. 信頼度分布グラフ
-                            if 'conf' in df.columns:
+                            if 'conf' in df.columns or 'confidence' in df.columns:
                                 try:
+                                    conf_col = 'conf' if 'conf' in df.columns else 'confidence'
                                     plt.figure(figsize=(10, 6))
-                                    conf_data = df['conf'].dropna()
+                                    conf_data = df[conf_col].dropna()
                                     plt.hist(conf_data, bins=30, alpha=0.7, color='green', edgecolor='black')
                                     plt.axvline(conf_data.mean(), color='red', linestyle='--', 
                                         label=f'Average: {conf_data.mean():.3f}')
@@ -1022,7 +1062,7 @@ if not METRICS_ANALYZER_AVAILABLE:
         
                 self.logger.info(f"🎨 可視化生成完了: 基本統計1個 + グラフ{graphs_generated}個 = 合計{total_files}個")
         
-                # 🔧 必ず辞書を返す
+                # 🔧 必ず辞書を返す（確実性のため）
                 return result
         
             except Exception as e:
@@ -1030,7 +1070,9 @@ if not METRICS_ANALYZER_AVAILABLE:
                 # 🔧 エラー時も辞書を返す
                 result.update({
                     "success": False,
-                    "error": str(e)
+                    "error": str(e),
+                    "graphs_generated": 0,
+                    "total_files": 0
                 })
                 return result
                 
@@ -1064,8 +1106,8 @@ if not METRICS_ANALYZER_AVAILABLE:
                 # フレーム数
                 frame_count = data.get("frame_count", 0)
                 ax3.pie([frame_count, max(1, 120 - frame_count)], 
-                       labels=['処理済み', '未処理'], autopct='%1.1f%%',
-                       colors=['lightgreen', 'lightgray'])
+                        labels=['処理済み', '未処理'], autopct='%1.1f%%',
+                        colors=['lightgreen', 'lightgray'])
                 ax3.set_title('フレーム処理状況')
                 
                 # 処理時間
@@ -1239,6 +1281,8 @@ class ImprovedYOLOAnalyzer:
 
     # Line 834-854を修正:
 
+    # Line 1272-1310の__init__メソッドを以下で置き換え:
+
     def __init__(self, config_path: str = "configs/default.yaml"):
         """
         初期化（完全統合版）
@@ -1248,13 +1292,13 @@ class ImprovedYOLOAnalyzer:
         """
         # 🔧 ロガーを最初に初期化
         self.logger = setup_logger()
-    
+
         # エラーコンテキスト設定
         if ERROR_HANDLER_AVAILABLE:
             context_manager = ErrorContext("ImprovedYOLOAnalyzer初期化", logger=self.logger)
         else:
             context_manager = self._basic_context("ImprovedYOLOAnalyzer初期化")
-        
+
         with context_manager as ctx:
             # 設定初期化
             self.config = self._initialize_config(config_path)
@@ -1263,11 +1307,18 @@ class ImprovedYOLOAnalyzer:
             self.depth_enabled = self.config.get('processing.depth_estimation.enabled', False)
             self.logger.info(f"🔍 深度推定: {'有効' if self.depth_enabled else '無効'}")
 
+            # 🔧 厳密モデル使用フラグ追加
+            self.force_exact_model = True
+            self.model_verification_results = {}
+
             # 評価器の選択と初期化
             self._initialize_evaluator(ctx)
-        
+
             # プロセッサーとアナライザー初期化
             self._initialize_processor_analyzer(ctx)
+
+            # 🔧 analyzer の明示的初期化を追加
+            self._initialize_analyzer(ctx)
 
             # エラー収集用
             self.error_collector = []
@@ -1356,37 +1407,181 @@ class ImprovedYOLOAnalyzer:
 
     def _initialize_processor_analyzer(self, ctx):
         """プロセッサー・アナライザー初期化（完全版）"""
-        # プロセッサー初期化
-        if VIDEO_PROCESSOR_AVAILABLE and VideoProcessor:
-            try:
-                self.processor = VideoProcessor(self.config)
+        try:
+            # Video Processor 初期化
+            if VIDEO_PROCESSOR_AVAILABLE:
                 self.logger.info("🎥 高度動画プロセッサーを初期化")
-            except Exception as e:
-                self.logger.warning(f"VideoProcessor 初期化失敗: {e}")
+                self.processor = VideoProcessor(self.config)
+            else:
+                self.logger.info("🔄 BasicVideoProcessor を初期化")
                 self.processor = BasicVideoProcessor(self.config)
-                self.logger.info("🔧 基本動画プロセッサーを初期化")
-        else:
+
+            # 🔧 analyzer の初期化は別メソッドで行う（重複を避けるため）
+            # self._initialize_analyzer(ctx) は __init__ で呼び出し済み
+        
+            ctx.add_info("processor_type", type(self.processor).__name__)
+        
+        except Exception as e:
+            self.logger.error(f"❌ プロセッサー・アナライザー初期化エラー: {e}", exc_info=True)
+            self._fallback_processor_analyzer(ctx)
+
+    def _fallback_processor_analyzer(self, ctx):
+        """プロセッサー・アナライザー用フォールバック"""
+        try:
+            self.logger.warning("🔄 基本プロセッサー・アナライザーにフォールバック")
             self.processor = BasicVideoProcessor(self.config)
-            self.logger.info("🔧 基本動画プロセッサーを初期化")
+        
+            # analyzer が未初期化の場合は初期化
+            if not hasattr(self, 'analyzer') or self.analyzer is None:
+                self._create_fallback_analyzer(ctx)
             
-        # アナライザー初期化
-        if METRICS_ANALYZER_AVAILABLE and MetricsAnalyzer:
-            try:
-                self.analyzer = MetricsAnalyzer(self.config)
-                self.logger.info("📊 高度メトリクス分析器を初期化")
-            except Exception as e:
-                self.logger.warning(f"MetricsAnalyzer 初期化失敗: {e}")
-                self.analyzer = BasicMetricsAnalyzer(self.config)
-                self.logger.info("🔧 基本メトリクス分析器を初期化")
-        else:
+            ctx.add_info("fallback_applied", True)
+        
+        except Exception as e:
+            self.logger.error(f"❌ フォールバック失敗: {e}", exc_info=True)
+            raise
+
+    def _initialize_analyzer(self, ctx):
+        """メトリクス分析器初期化（完全版）"""
+        try:
+            self.logger.info("📊 高度メトリクス分析器を初期化")
+        
+            # 🔧 METRICS_ANALYZER_AVAILABLE の確認
+            if METRICS_ANALYZER_AVAILABLE:
+                try:
+                    # 高度分析器の初期化を試行
+                    self.analyzer = MetricsAnalyzer(self.config)
+                    self.logger.info("✅ MetricsAnalyzer初期化成功")
+                    ctx.add_info("analyzer_type", "MetricsAnalyzer")
+                    return
+                except Exception as e:
+                    self.logger.warning(f"MetricsAnalyzer初期化失敗: {e}")
+        
+            # 🔧 フォールバック: BasicMetricsAnalyzer
+            self.logger.info("🔄 BasicMetricsAnalyzerにフォールバック")
             self.analyzer = BasicMetricsAnalyzer(self.config)
-            self.logger.info("🔧 基本メトリクス分析器を初期化")
+            self.logger.info("✅ BasicMetricsAnalyzer初期化成功")
+            ctx.add_info("analyzer_type", "BasicMetricsAnalyzer")
+        
+            # 🔧 create_visualizations メソッドの存在確認
+            if hasattr(self.analyzer, 'create_visualizations'):
+                self.logger.info("✅ create_visualizations メソッド確認")
+            else:
+                self.logger.error("❌ create_visualizations メソッドが存在しません")
+                # 🔧 メソッドを動的に追加
+                self._add_fallback_visualization_method()
+            
+        except Exception as e:
+            self.logger.error(f"❌ 分析器初期化エラー: {e}", exc_info=True)
+            # 🔧 最終フォールバック
+            self._create_fallback_analyzer(ctx)
+
+    def _add_fallback_visualization_method(self):
+        """フォールバック可視化メソッドの動的追加"""
+        def fallback_create_visualizations(detection_results, vis_dir):
+            """フォールバック可視化生成"""
+            try:
+                self.logger.info(f"🔧 フォールバック可視化生成: {vis_dir}")
+            
+                from pathlib import Path
+                import json
+                from datetime import datetime
+            
+                # ディレクトリ作成
+                vis_path = Path(str(vis_dir))
+                vis_path.mkdir(parents=True, exist_ok=True)
+            
+                # 基本統計ファイル作成
+                stats_file = vis_path / "basic_stats.json"
+                basic_stats = {
+                    "visualization_type": "FallbackVisualization",
+                    "timestamp": datetime.now().isoformat(),
+                    "detection_results_type": str(type(detection_results)),
+                    "success": True
+                }
+            
+                with open(stats_file, 'w', encoding='utf-8') as f:
+                    json.dump(basic_stats, f, indent=2, ensure_ascii=False)
+            
+                self.logger.info(f"✅ フォールバック可視化完了: {stats_file}")
+            
+                return {
+                    "success": True,
+                    "basic_stats_file": str(stats_file),
+                    "total_files": 1,
+                    "graphs_generated": 0,
+                    "fallback": True
+                }
+            
+            except Exception as e:
+                self.logger.error(f"❌ フォールバック可視化エラー: {e}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "total_files": 0,
+                    "graphs_generated": 0,
+                    "fallback": True
+                }
+    
+        # 🔧 メソッドを動的にバインド
+        import types
+        self.analyzer.create_visualizations = types.MethodType(fallback_create_visualizations, self.analyzer)
+        self.logger.info("🔧 フォールバック可視化メソッド追加完了")
+
+    def _create_fallback_analyzer(self, ctx):
+        """最終フォールバック分析器の作成"""
+        class FallbackAnalyzer:
+            def __init__(self, config):
+                self.config = config
+                self.logger = logging.getLogger(__name__)
+        
+            def create_visualizations(self, detection_results, vis_dir):
+                """最終フォールバック可視化"""
+                try:
+                    from pathlib import Path
+                    import json
+                    from datetime import datetime
+                
+                    vis_path = Path(str(vis_dir))
+                    vis_path.mkdir(parents=True, exist_ok=True)
+                
+                    fallback_file = vis_path / "fallback_analysis.json"
+                    fallback_data = {
+                        "analyzer_type": "FallbackAnalyzer",
+                        "timestamp": datetime.now().isoformat(),
+                        "note": "分析器初期化失敗のため最終フォールバックを使用",
+                        "detection_results_available": detection_results is not None
+                    }
+                
+                    with open(fallback_file, 'w', encoding='utf-8') as f:
+                        json.dump(fallback_data, f, indent=2, ensure_ascii=False)
+                
+                    return {
+                        "success": True,
+                        "total_files": 1,
+                        "graphs_generated": 0,
+                        "fallback": True,
+                        "analyzer_type": "FallbackAnalyzer"
+                    }
+                
+                except Exception as e:
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "total_files": 0,
+                        "graphs_generated": 0,
+                        "fallback": True
+                    }
+    
+        self.analyzer = FallbackAnalyzer(self.config)
+        self.logger.warning("⚠️ 最終フォールバック分析器を作成")
+        ctx.add_info("analyzer_type", "FallbackAnalyzer")
 
     def _setup_directories(self):
         """ディレクトリセットアップ（完全版）"""
         directories = [
             "outputs/baseline",
-            "outputs/experiments", 
+            "outputs/experiments",
             "outputs/visualizations",
             "outputs/temp",
             "logs",
@@ -1624,71 +1819,265 @@ class ImprovedYOLOAnalyzer:
                 
                 self.logger.debug(f"📝 現在の解析統計を更新: {self.current_analysis_stats}")
 
-                # Step 2: 検出・追跡処理（フォールバック対応）
-                if self.depth_enabled:
-                    self.logger.info("🔍 Step 2: 深度統合検出・追跡処理開始")
-                    if hasattr(self.processor, 'run_detection_tracking_with_depth'):
+                # Step 2: 検出・追跡処理（キーポイント確実取得版）
+                self.logger.info("🎯 Step 2: YOLOポーズモデル確実使用処理開始")
+
+                # 🔧 ポーズモデルパスの確実な取得
+                models_config = self.config.get('models', {}) if hasattr(self.config, 'get') else {}
+                pose_model_path = models_config.get('pose', 'models/yolo/yolo11x-pose.pt')
+
+                # 🔧 修正: ポーズモデルの確実な確認
+                if not Path(pose_model_path).exists():
+                    self.logger.error(f"🚨 ポーズモデルが存在しません: {pose_model_path}")
+    
+                    # 代替ポーズモデルを探索
+                    alternative_paths = [
+                        "models/yolo/yolo11x-pose.pt",
+                        "models/yolo11x-pose.pt", 
+                        "yolo11x-pose.pt",
+                        "models/yolo/yolo11l-pose.pt",
+                        "models/yolo11l-pose.pt",
+                        "models/yolo/yolo11m-pose.pt",
+                        "models/yolo11m-pose.pt"
+                    ]
+    
+                    found_model = None
+                    for alt_path in alternative_paths:
+                        if Path(alt_path).exists():
+                            found_model = alt_path
+                            self.logger.info(f"🔧 代替ポーズモデル発見: {alt_path}")
+                            break
+    
+                    if found_model:
+                        pose_model_path = found_model
+                        self.logger.info(f"✅ ポーズモデルパス更新: {pose_model_path}")
+                    else:
+                        self.logger.error("🚨 利用可能なポーズモデルが見つかりません")
+                        self.logger.error("🔧 以下のパスを確認してください:")
+                        for path in [pose_model_path] + alternative_paths:
+                            self.logger.error(f"  - {path}")
+                        return ResponseBuilder.error(
+                            message="ポーズモデルが見つかりません",
+                            details={
+                                "original_path": pose_model_path,
+                                "searched_paths": alternative_paths,
+                                "suggestion": "setup.py を実行してモデルをダウンロードしてください"
+                            }
+                        )
+
+                # 🔧 修正: ポーズモデル確実使用の設定
+                detection_config = {
+                    "confidence_threshold": 0.3,
+                    "tracking_config": "bytetrack.yaml",  # 🔧 確実に設定
+                    "save_visualizations": True,
+                    "save_detection_frames": True,
+                    "force_pose_task": True,  # 🔧 ポーズタスク強制
+                    "model_verification_required": True,  # 🔧 モデル検証必須
+                    "keypoint_processing_enabled": True  # 🔧 キーポイント処理確実有効
+                }
+
+                self.logger.info(f"🎯 検出設定:")
+                self.logger.info(f"  ポーズモデル: {pose_model_path}")
+                self.logger.info(f"  tracker: {detection_config['tracking_config']}")
+                self.logger.info(f"  ポーズタスク強制: {detection_config['force_pose_task']}")
+
+                # 🚀 yolopose_analyzer での確実なキーポイント検出実行
+                try:
+                    if not YOLOPOSE_ANALYZER_AVAILABLE:
+                        raise ImportError("yolopose_analyzer が利用できません")
+    
+                    # 🔧 キーポイント検出を確実にする設定
+                    enhanced_config = {
+                        "models": {
+                            "pose": pose_model_path
+                        },
+                        "processing": {
+                            "confidence_threshold": 0.3,
+                            "save_keypoints": True,
+                            "keypoint_format": "coco",
+                            "force_keypoint_detection": True,
+                            "model_policy": {
+                                "verify_pose_model": True,
+                                "require_keypoints": True,
+                                "use_pose_model": True
+                            }
+                        },
+                        "tracking": {
+                            "tracker_type": "bytetrack",
+                            "track_thresh": 0.6,
+                            "track_buffer": 60,
+                            "match_thresh": 0.8
+                        },
+                        "output": {
+                            "save_visualizations": True,
+                            "save_csv": True,
+                            "csv_include_keypoints": True
+                        },
+                        "inference": {
+                            "batch_size": 16,
+                            "device": "auto",
+                            "task": "pose"  # 🔧 configの中でタスク指定
+                        }
+                    }
+    
+                    # 既存設定とマージ
+                    base_config = {}
+                    if hasattr(self.config, '__dict__'):
+                        base_config = self.config.__dict__
+                    elif hasattr(self.config, 'data'):
+                        base_config = self.config.data
+    
+                    for key, value in base_config.items():
+                        if key not in enhanced_config:
+                            enhanced_config[key] = value
+    
+                    self.logger.info("🚀 確実キーポイント検出を実行")
+    
+                    # yolopose_analyzer実行（キーポイント重視設定）
+                    detection_result = analyze_frames_with_tracking_enhanced(
+                        frame_dir=str(frame_dir),
+                        result_dir=str(output_dir),
+                        model_path=pose_model_path,
+                        config=enhanced_config,
+                        force_exact_model=True  # 🔧 確実なモデル使用フラグ
+                    )
+    
+                    processing_type = "キーポイント統合"
+    
+                    # 🔍 キーポイント検出結果の詳細検証
+                    if detection_result.get("success", False):
+                        data = detection_result.get("data", {})
+                        csv_path = data.get("csv_path")
+        
+                        if csv_path and Path(csv_path).exists():
+                            # CSV内容の詳細確認
+                            import pandas as pd
+                            df = pd.read_csv(csv_path)
+            
+                            self.logger.info("🔍 ========== キーポイント検出結果検証 ==========")
+                            self.logger.info(f"📊 検出データ形状: {df.shape}")
+                            self.logger.info(f"📋 全列名: {df.columns.tolist()}")
+            
+                            # キーポイント列の確認
+                            keypoint_cols = [col for col in df.columns if 'keypoint' in col.lower() or 'kpt' in col.lower()]
+                            self.logger.info(f"🦴 キーポイント関連列: {len(keypoint_cols)}個")
+            
+                            if keypoint_cols:
+                                self.logger.info(f"✅ キーポイント検出成功: {keypoint_cols[:10]}...")
+                
+                                # 4点キーポイント（COCO形式）の特別確認
+                                target_keypoints = [3, 4, 5, 6]  # left_ear, right_ear, left_shoulder, right_shoulder
+                                found_targets = []
+                
+                                for kpt_idx in target_keypoints:
+                                    x_cols = [col for col in df.columns if f'keypoint_{kpt_idx}_x' in col or f'kpt_{kpt_idx}_x' in col]
+                                    y_cols = [col for col in df.columns if f'keypoint_{kpt_idx}_y' in col or f'kpt_{kpt_idx}_y' in col]
+                    
+                                    if x_cols and y_cols:
+                                        found_targets.append(f"COCO#{kpt_idx}")
+                                        self.logger.info(f"✅ COCO#{kpt_idx}キーポイント発見: {x_cols[0]}, {y_cols[0]}")
+                
+                                if len(found_targets) >= 3:
+                                    self.logger.info(f"🎯 4点キーポイント検出状況: {len(found_targets)}/4点発見")
+                                    self.logger.info(f"  発見: {found_targets}")
+                                else:
+                                    self.logger.warning(f"⚠️ 4点キーポイント不完全: {len(found_targets)}/4点のみ")
+                                    self.logger.warning(f"  発見済み: {found_targets}")
+                            else:
+                                self.logger.error("❌ キーポイント列が一切検出されていません！")
+                                self.logger.error("🔧 原因: ポーズモデルが正しく動作していない可能性")
+                
+                                # サンプルデータの表示
+                                if not df.empty:
+                                    self.logger.error("📋 検出されたデータサンプル:")
+                                    for col in df.columns[:10]:
+                                        sample_value = df.iloc[0][col] if len(df) > 0 else "N/A"
+                                        self.logger.error(f"  {col}: {sample_value}")
+                        else:
+                            self.logger.error(f"❌ 検出結果CSVが見つかりません: {csv_path}")
+                    else:
+                        error_msg = detection_result.get("error", "不明なエラー")
+                        self.logger.error(f"❌ キーポイント検出失敗: {error_msg}")
+                        self.error_collector.append(f"キーポイント検出失敗: {error_msg}")
+                        raise VideoProcessingError(error_msg)
+
+                except ImportError as e:
+                    self.logger.error(f"❌ yolopose_analyzer インポートエラー: {e}")
+                    self.logger.warning("🔄 BasicVideoProcessor にフォールバック（キーポイント機能制限）")
+    
+                    # フォールバック処理
+                    if self.depth_enabled and hasattr(self.processor, 'run_detection_tracking_with_depth'):
                         detection_result = self.processor.run_detection_tracking_with_depth(frame_dir, video_name)
                     else:
-                        self.logger.warning("深度統合処理が利用できません。標準処理にフォールバック")
                         detection_result = self.processor.run_detection_tracking(frame_dir, video_name)
-                    processing_type = "深度統合"
-                else:
-                    self.logger.info("👁️ Step 2: 標準検出・追跡処理開始")
-                    detection_result = self.processor.run_detection_tracking(frame_dir, video_name)
-                    processing_type = "標準"
+    
+                    processing_type = "基本検出（フォールバック）"
+    
+                    # フォールバック時の警告
+                    self.logger.warning("⚠️ yolopose_analyzerが利用できないため、キーポイント機能が制限されます")
+                    self.logger.warning("💡 解決策: pip install yolopose-analyzer でインストールしてください")
 
-                # 🔧 検出処理が失敗した場合のフォールバック
+                except Exception as e:
+                    self.logger.error(f"❌ キーポイント検出処理エラー: {e}")
+                    import traceback
+                    self.logger.error(f"🔧 詳細トレースバック: {traceback.format_exc()}")
+                    self.error_collector.append(f"キーポイント検出エラー: {e}")
+                    raise VideoProcessingError(f"キーポイント検出に失敗: {e}")
+
+                # 🔧 Step 2結果の最終確認
                 if not detection_result.get("success", False):
                     error_msg = detection_result.get("error", "不明なエラー")
-                    self.logger.warning(f"⚠️ {processing_type}処理エラー: {error_msg}")
-                    
-                    # BasicVideoProcessorのフォールバック処理を試行
-                    if VIDEO_PROCESSOR_AVAILABLE and not isinstance(self.processor, BasicVideoProcessor):
-                        self.logger.info("🔄 BasicVideoProcessorにフォールバック")
-                        fallback_processor = BasicVideoProcessor(self.config)
-                        fallback_processor.load_models()
-                        detection_result = fallback_processor.run_detection_tracking(frame_dir, video_name)
-                        
-                        if detection_result.get("success", False):
-                            self.logger.info("✅ フォールバック処理成功")
-                            processing_type = "フォールバック"
-                        else:
-                            self.error_collector.append(f"{processing_type}処理失敗: {error_msg}")
-                            self.logger.error(f"❌ フォールバック処理も失敗")
-                            raise VideoProcessingError(error_msg)
-                    else:
-                        self.error_collector.append(f"{processing_type}処理失敗: {error_msg}")
-                        self.logger.error(f"❌ {error_msg}")
-                        raise VideoProcessingError(error_msg)
+                    self.logger.error(f"❌ {processing_type}処理エラー: {error_msg}")
+                    self.error_collector.append(f"{processing_type}処理失敗: {error_msg}")
+                    raise VideoProcessingError(error_msg)
 
                 self.logger.info(f"✅ Step 2完了: {processing_type}処理")
 
+                # 🔧 検出統計の表示
+                if detection_result.get("success", False):
+                    data = detection_result.get("data", {})
+                    detection_count = data.get("detection_count", 0)
+                    frame_count = data.get("frame_count", 0)
+    
+                    self.logger.info(f"📊 検出統計:")
+                    self.logger.info(f"  - 総検出数: {detection_count}")
+                    self.logger.info(f"  - 処理フレーム数: {frame_count}")
+    
+                    if frame_count > 0:
+                        detection_rate = (detection_count / frame_count)
+                        self.logger.info(f"  - フレーム当たり検出数: {detection_rate:.2f}")
+
                 # 🎯 Step 2.5: 4点キーポイント処理（オプション）
-                use_4point_keypoints = self.config.get('processing.use_4point_keypoints', False)
-                
-                if use_4point_keypoints and detection_result.get("success", False):
-                    self.logger.info("🎯 Step 2.5: 4点キーポイント処理開始")
+                try:
+                    original_csv = detection_result["data"]["csv_path"]
+                    filtered_result = self.filter_keypoints_to_4points(original_csv, output_dir)
                     
-                    try:
-                        original_csv = detection_result["data"]["csv_path"]
-                        filtered_csv = self.filter_keypoints_to_4points(original_csv, output_dir)
+                    # 🔧 修正: 辞書から実際のCSVパスを取得
+                    if isinstance(filtered_result, dict) and filtered_result.get("success"):
+                        filtered_csv = filtered_result.get("fourpoint_csv")
+                        metrics_csv = filtered_result.get("metrics_csv")
                         
                         # 結果に4点情報追加
                         detection_result["data"]["filtered_csv_path"] = filtered_csv
+                        detection_result["data"]["metrics_csv_path"] = metrics_csv
                         detection_result["data"]["keypoint_mode"] = "4_points"
                         
-                        # 4点専用可視化
-                        vis_result = self.create_4point_visualization(filtered_csv, video_path, output_dir)
-                        if vis_result.get("success", False):
-                            detection_result["data"]["visualization_4points"] = vis_result
-                            self.logger.info("✅ 4点専用可視化完了")
-                        
-                        self.logger.info("✅ Step 2.5完了: 4点キーポイント処理")
-                        
-                    except Exception as e:
-                        self.logger.warning(f"⚠️ Step 2.5警告: 4点処理エラー（処理継続）: {e}")
-                        self.error_collector.append(f"4点キーポイント処理エラー: {e}")
+                        # 🔧 修正: CSVパス（文字列）を渡す
+                        if filtered_csv and Path(filtered_csv).exists():
+                            self.logger.info(f"🎨 4点可視化生成: {filtered_csv}")
+                            vis_result = self.create_4point_visualization(filtered_csv, video_path, output_dir)
+                        #                                                ^^^^^^^^^^ 
+                        #                                                文字列パスを渡す
+                        else:
+                            self.logger.error(f"❌ 4点CSVファイルが見つかりません: {filtered_csv}")
+                            vis_result = {"success": False, "error": "4点CSVファイルが見つかりません"}
+                    else:
+                        self.logger.error(f"❌ 4点フィルタリング失敗: {filtered_result}")
+                        vis_result = {"success": False, "error": "4点フィルタリング失敗"}
+                
+                except Exception as e:
+                    self.logger.error(f"❌ 4点処理エラー: {e}")
+                    vis_result = {"success": False, "error": str(e)}
 
                 # Step 3: 包括的評価
                 self.logger.info("📊 Step 3: 包括的評価開始")
@@ -1725,6 +2114,15 @@ class ImprovedYOLOAnalyzer:
                     # 🔧 戻り値を受け取って詳細ログ出力
                     vis_result = self.analyzer.create_visualizations(detection_result, vis_dir)
     
+                    # 🔧 None チェックを追加
+                    if vis_result is None:
+                        self.logger.warning("⚠️ Step 4警告: 可視化メソッドがNoneを返しました")
+                        vis_result = {"success": False, "error": "可視化メソッドがNoneを返しました"}
+                    elif not isinstance(vis_result, dict):
+                        self.logger.warning(f"⚠️ Step 4警告: 予期しない戻り値型: {type(vis_result)}")
+                        vis_result = {"success": False, "error": f"予期しない戻り値型: {type(vis_result)}"}
+    
+                    # 🔧 安全な成功判定
                     if vis_result.get("success", False):
                         total_files = vis_result.get("total_files", 0)
                         graphs_count = vis_result.get("graphs_generated", 0)
@@ -1738,6 +2136,8 @@ class ImprovedYOLOAnalyzer:
                     self.logger.warning(f"⚠️ Step 4警告: 可視化生成エラー（処理継続）: {e}")
                     self.logger.error(f"🔧 Step 4詳細エラー: {e}", exc_info=True)
                     self.error_collector.append(f"可視化生成エラー: {e}")
+                    # 🔧 フォールバック用のダミー結果
+                    vis_result = {"success": False, "error": str(e)}
 
                 # 統合結果の構築
                 integrated_result = {
@@ -1809,235 +2209,695 @@ class ImprovedYOLOAnalyzer:
     
     # Line 1100付近（run_baseline_analysisメソッドの直後）に追加:
 
-    # 🎯 4点キーポイント機能の追加
+    # 完全置換: Line 2184-2296
     def filter_keypoints_to_4points(self, csv_path, output_dir):
         """
-        17点キーポイントを4点（両耳・両肩）にフィルタリング
-        
-        Args:
-            csv_path: 元の17点キーポイントCSV
-            output_dir: 出力ディレクトリ
-            
-        Returns:
-            filtered_csv_path: 4点フィルタリング済みCSV
+        🎯 4点キーポイントフィルタリング（完全修正版）
+    
+        キーポイント検出失敗時は疑似データ生成ではなく、
+        根本原因の特定と解決を促進する。
         """
         try:
-            import pandas as pd
-            import numpy as np
-            
             self.logger.info("🎯 4点キーポイントフィルタリング開始")
-            
-            # CSV読み込み
+            self.logger.info(f"📂 入力CSV: {csv_path}")
+        
+            # CSVファイル存在確認
+            if not Path(csv_path).exists():
+                self.logger.error(f"❌ CSVファイルが存在しません: {csv_path}")
+                raise FileNotFoundError(f"CSVファイルが見つかりません: {csv_path}")
+        
+            # CSVデータ読み込み
+            try:
+                df = pd.read_csv(csv_path)
+                self.logger.info(f"📊 CSV読み込み完了: {len(df)}行, {len(df.columns)}列")
+            except Exception as csv_error:
+                self.logger.error(f"❌ CSV読み込みエラー: {csv_error}")
+                raise
+        
+            # 🔧 修正: より詳細な列診断とエラー処理
             df = pd.read_csv(csv_path)
+            self.logger.info(f"📋 検出された全列: {list(df.columns)}")
+        
+            # キーポイント列の存在確認（詳細診断）
+            keypoint_columns = [col for col in df.columns if col.endswith(('_x', '_y', '_conf'))]
+        
+            if not keypoint_columns:
+                # 🚨 修正: 疑似データ生成を完全に禁止し、根本原因を特定
+                self.logger.error("🚨 致命的: キーポイント列が一切検出されていません")
+                self.logger.error(f"📊 検出された列: {list(df.columns)}")
+                self.logger.error("🔍 根本原因診断:")
+                self.logger.error("💡 解決策1: YOLOポーズモデル(-pose.pt)が使用されているか確認")
+                self.logger.error("💡 解決策2: core.pyのポーズタスク指定が正しいか確認")
+                self.logger.error("💡 解決策3: tracker設定が正しく設定されているか確認")
             
-            # 4点キーポイント（両耳・両肩）のインデックス
-            target_keypoints = {
-                "left_ear": 3,
-                "right_ear": 4, 
-                "left_shoulder": 5,
-                "right_shoulder": 6
-            }
-            
-            # 4点用の新しいカラム作成
-            for name, idx in target_keypoints.items():
-                x_col = f"keypoint_{idx}_x"
-                y_col = f"keypoint_{idx}_y"
-                conf_col = f"keypoint_{idx}_conf"
-                
-                if x_col in df.columns:
-                    df[f"kpt4_{name}_x"] = df[x_col]
-                    df[f"kpt4_{name}_y"] = df[y_col]
-                    df[f"kpt4_{name}_conf"] = df[conf_col]
-            
-            # 元の17点キーポイントカラムを削除
-            original_kpt_cols = [col for col in df.columns if 'keypoint_' in col and 'kpt4_' not in col]
-            df = df.drop(columns=original_kpt_cols)
-            
-            # 4点専用メトリクス追加
-            self.add_4point_metrics(df)
-            
-            # 保存
-            filtered_csv = Path(output_dir) / "detections_4points.csv"
-            df.to_csv(filtered_csv, index=False)
-            
-            self.logger.info(f"✅ 4点フィルタリング完了: {filtered_csv}")
-            return str(filtered_csv)
-            
-        except Exception as e:
-            self.logger.error(f"❌ 4点フィルタリングエラー: {e}")
-            return csv_path
-
-    def add_4point_metrics(self, df):
-        """4点キーポイント専用メトリクス計算"""
-        try:
-            import numpy as np
-            
-            # 肩幅計算
-            if ('kpt4_left_shoulder_x' in df.columns and 
-                'kpt4_right_shoulder_x' in df.columns):
-                
-                df['shoulder_width'] = np.sqrt(
-                    (df['kpt4_left_shoulder_x'] - df['kpt4_right_shoulder_x'])**2 + 
-                    (df['kpt4_left_shoulder_y'] - df['kpt4_right_shoulder_y'])**2
+                # 🚨 修正: 疑似データ生成は絶対に行わない
+                raise ValueError(
+                    "キーポイント検出が完全に失敗しています。"
+                    "YOLOポーズモデル(-pose.pt)の設定とcore.pyのポーズタスク指定を確認してください。"
                 )
             
-            # 頭部中心位置
-            if ('kpt4_left_ear_x' in df.columns and 
-                'kpt4_right_ear_x' in df.columns):
+                # 🔧 修正: 根本原因の診断情報を提供
+                self.logger.error("🔍 根本原因診断:")
+                self.logger.error("💡 解決策1: YOLOポーズモデル(-pose.pt)が使用されているか確認")
+                self.logger.error("💡 解決策2: core.pyのポーズタスク指定が正しいか確認")
+                self.logger.error("💡 解決策3: tracker設定が正しく設定されているか確認")
+            
+                # CSVの基本情報をログ出力
+                if 'frame' in df.columns and 'person_id' in df.columns:
+                    self.logger.error(f"📊 基本検出データは存在: フレーム数 {df['frame'].nunique()}, 人物検出 {len(df)}")
+                    self.logger.error("🚨 しかし、キーポイント検出が完全に失敗しています")
+                else:
+                    self.logger.error("🚨 基本検出データも異常です")
+            
+                # 🚨 修正: 疑似データ生成は絶対に行わない
+                raise ValueError(
+                    "キーポイント検出が完全に失敗しています。"
+                    "YOLOポーズモデル(-pose.pt)の設定とcore.pyのポーズタスク指定を確認してください。"
+                    "疑似データでの処理は行いません。"
+                )
+        
+            self.logger.info(f"✅ キーポイント列検出: {len(keypoint_columns)}個")
+        
+            # 🎯 修正: 4点キーポイント（COCOフォーマット）の確実な抽出
+            target_keypoints = {
+                "left_ear": 3,      # COCO: 3番
+                "right_ear": 4,     # COCO: 4番  
+                "left_shoulder": 5, # COCO: 5番
+                "right_shoulder": 6 # COCO: 6番
+            }
+        
+            # 🔧 修正: キーポイント列の存在確認を強化
+            missing_keypoints = []
+            available_keypoints = {}
+        
+            for kpt_name, kpt_idx in target_keypoints.items():
+                x_col = f"{kpt_name}_x"
+                y_col = f"{kpt_name}_y"
+                conf_col = f"{kpt_name}_conf"
+            
+                if all(col in df.columns for col in [x_col, y_col, conf_col]):
+                    available_keypoints[kpt_name] = {
+                        'x': x_col, 'y': y_col, 'conf': conf_col,
+                        'coco_idx': kpt_idx
+                    }
+                    self.logger.debug(f"✅ キーポイント利用可能: {kpt_name}")
+                else:
+                    missing_keypoints.append(kpt_name)
+                    self.logger.error(f"❌ 欠損キーポイント: {kpt_name}")
                 
-                df['head_center_x'] = (df['kpt4_left_ear_x'] + df['kpt4_right_ear_x']) / 2
-                df['head_center_y'] = (df['kpt4_left_ear_y'] + df['kpt4_right_ear_y']) / 2
+                    # どの列が不足しているかを詳細に報告
+                    missing_cols = [col for col in [x_col, y_col, conf_col] if col not in df.columns]
+                    self.logger.error(f"   不足列: {missing_cols}")
+        
+            if missing_keypoints:
+                self.logger.error(f"🚨 必要な4点キーポイントが不足: {missing_keypoints}")
+                self.logger.error(f"✅ 利用可能なキーポイント: {list(available_keypoints.keys())}")
             
-            # 肩角度計算
-            if 'shoulder_width' in df.columns:
-                df['shoulder_angle'] = np.arctan2(
-                    df['kpt4_right_shoulder_y'] - df['kpt4_left_shoulder_y'],
-                    df['kpt4_right_shoulder_x'] - df['kpt4_left_shoulder_x']
-                ) * 180 / np.pi
+                # 部分的な処理を提案
+                if len(available_keypoints) >= 2:
+                    self.logger.warning(f"⚠️ 部分的な処理が可能: {len(available_keypoints)}/4点")
+                    self.logger.warning("🔧 利用可能なキーポイントのみで処理を続行します")
+                else:
+                    raise ValueError(
+                        f"4点フィルタリングに必要なキーポイントが不足しています: {missing_keypoints}\n"
+                        f"利用可能: {list(available_keypoints.keys())}\n"
+                        "最低2点のキーポイントが必要です。"
+                    )
+        
+            self.logger.info(f"🎯 使用するキーポイント: {list(available_keypoints.keys())}")
+        
+            # 🎯 4点フィルタリング処理の実行
+            filtered_data = []
+            confidence_threshold = 0.3  # デフォルト信頼度閾値
+        
+            if hasattr(self, 'config') and self.config:
+                confidence_threshold = self.config.get('processing', {}).get('keypoint_confidence_threshold', 0.3)
+        
+            self.logger.info(f"🎯 キーポイント信頼度閾値: {confidence_threshold}")
+        
+            total_detections = len(df)
+            valid_detections = 0
+        
+            for idx, row in df.iterrows():
+                # 基本検出情報を保持
+                filtered_row = {
+                    'frame': row['frame'],
+                    'person_id': row['person_id'],
+                    'x1': row['x1'],
+                    'y1': row['y1'], 
+                    'x2': row['x2'],
+                    'y2': row['y2'],
+                    'conf': row['conf'],
+                    'class_name': row['class_name']
+                }
             
-            # 4点品質スコア
-            conf_cols = [col for col in df.columns if 'kpt4_' in col and '_conf' in col]
-            if conf_cols:
-                df['avg_4point_confidence'] = df[conf_cols].mean(axis=1)
-                df['valid_4point_count'] = (df[conf_cols] > 0.3).sum(axis=1)
-                df['keypoint_quality_score'] = df['avg_4point_confidence'] * (df['valid_4point_count'] / 4)
+                # 4点キーポイント情報を追加
+                valid_keypoints_count = 0
             
-            self.logger.info("✅ 4点メトリクス計算完了")
+                for kpt_name, kpt_info in available_keypoints.items():
+                    x_val = row[kpt_info['x']]
+                    y_val = row[kpt_info['y']]
+                    conf_val = row[kpt_info['conf']]
+                
+                    # キーポイントデータを追加
+                    filtered_row[f"{kpt_name}_x"] = x_val
+                    filtered_row[f"{kpt_name}_y"] = y_val
+                    filtered_row[f"{kpt_name}_conf"] = conf_val
+                
+                    # 有効性チェック
+                    if conf_val >= confidence_threshold and x_val > 0 and y_val > 0:
+                        valid_keypoints_count += 1
             
+                # 不足キーポイントはゼロ埋め
+                for missing_kpt in missing_keypoints:
+                    filtered_row[f"{missing_kpt}_x"] = 0.0
+                    filtered_row[f"{missing_kpt}_y"] = 0.0
+                    filtered_row[f"{missing_kpt}_conf"] = 0.0
+            
+                # 有効キーポイントが十分な場合のみ保持
+                min_valid_keypoints = max(1, len(available_keypoints) // 2)  # 最低半分
+                if valid_keypoints_count >= min_valid_keypoints:
+                    filtered_data.append(filtered_row)
+                    valid_detections += 1
+            
+            self.logger.info(f"📊 フィルタリング結果: {valid_detections}/{total_detections} ({valid_detections/total_detections*100:.1f}%)")
+        
+            if not filtered_data:
+                self.logger.error("🚨 フィルタリング後のデータが空です")
+                self.logger.error(f"信頼度閾値 {confidence_threshold} を下げることを検討してください")
+                raise ValueError("フィルタリング後のデータが空です。信頼度閾値を確認してください。")
+        
+            # 🎯 4点データフレーム作成
+            filtered_df = pd.DataFrame(filtered_data)
+        
+            # 🎯 4点専用メトリクス計算（実データ版）
+            self.logger.info("📊 4点専用メトリクス計算開始")
+            metrics_df = self._add_4point_metrics(filtered_df)
+        
+            # 結果保存
+            os.makedirs(output_dir, exist_ok=True)
+        
+            # 4点フィルタリング済みCSV
+            fourpoint_csv_path = os.path.join(output_dir, "4point_keypoints.csv")
+            filtered_df.to_csv(fourpoint_csv_path, index=False)
+        
+            # 4点メトリクス付きCSV
+            metrics_csv_path = os.path.join(output_dir, "4point_metrics.csv")
+            metrics_df.to_csv(metrics_csv_path, index=False)
+        
+            self.logger.info(f"✅ 4点フィルタリング完了")
+            self.logger.info(f"📁 4点データ保存: {fourpoint_csv_path}")
+            self.logger.info(f"📁 メトリクス保存: {metrics_csv_path}")
+        
+            return {
+                "success": True,
+                "fourpoint_csv": fourpoint_csv_path,
+                "metrics_csv": metrics_csv_path,
+                "valid_detections": valid_detections,
+                "total_detections": total_detections,
+                "filter_rate": valid_detections / total_detections,
+                "available_keypoints": list(available_keypoints.keys()),
+                "missing_keypoints": missing_keypoints,
+                "confidence_threshold": confidence_threshold
+            }
+        
+        except Exception as e:
+            self.logger.error(f"❌ 4点フィルタリングエラー: {e}")
+            raise
+
+    def _add_4point_metrics(self, df):
+        """4点キーポイント専用メトリクス計算（実データ版・修正版）"""
+        try:
+            self.logger.info("📊 4点メトリクス計算開始")
+        
+            # データフレームのコピーを作成
+            metrics_df = df.copy()
+        
+            # 🎯 基本メトリクス初期化
+            metrics_df['shoulder_width'] = 0.0
+            metrics_df['head_center_x'] = 0.0
+            metrics_df['head_center_y'] = 0.0
+            metrics_df['pose_angle'] = 0.0
+            metrics_df['keypoint_completeness'] = 0.0
+            metrics_df['pose_confidence'] = 0.0
+        
+            # メトリクス計算統計
+            calculated_count = 0
+            shoulder_width_count = 0
+            head_position_count = 0
+            pose_angle_count = 0
+        
+            for idx, row in metrics_df.iterrows():
+                try:
+                    # 🎯 肩幅計算（left_shoulder, right_shoulder）
+                    if ('left_shoulder_x' in row and 'right_shoulder_x' in row and
+                        'left_shoulder_y' in row and 'right_shoulder_y' in row and
+                        'left_shoulder_conf' in row and 'right_shoulder_conf' in row):
+                    
+                        left_shoulder_conf = float(row['left_shoulder_conf'])
+                        right_shoulder_conf = float(row['right_shoulder_conf'])
+                    
+                        if left_shoulder_conf > 0.3 and right_shoulder_conf > 0.3:
+                            left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
+                            right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
+                        
+                            if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
+                                shoulder_width = np.sqrt((right_x - left_x) ** 2 + (right_y - left_y) ** 2)
+                                metrics_df.at[idx, 'shoulder_width'] = shoulder_width
+                                shoulder_width_count += 1
+                
+                    # 🎯 頭部中心位置計算（left_ear, right_ear）
+                    if ('left_ear_x' in row and 'right_ear_x' in row and
+                        'left_ear_y' in row and 'right_ear_y' in row and
+                        'left_ear_conf' in row and 'right_ear_conf' in row):
+                    
+                        left_ear_conf = float(row['left_ear_conf'])
+                        right_ear_conf = float(row['right_ear_conf'])
+                    
+                        if left_ear_conf > 0.3 and right_ear_conf > 0.3:
+                            left_x, left_y = float(row['left_ear_x']), float(row['left_ear_y'])
+                            right_x, right_y = float(row['right_ear_x']), float(row['right_ear_y'])
+                        
+                            if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
+                                head_center_x = (left_x + right_x) / 2
+                                head_center_y = (left_y + right_y) / 2
+                                metrics_df.at[idx, 'head_center_x'] = head_center_x
+                                metrics_df.at[idx, 'head_center_y'] = head_center_y
+                                head_position_count += 1
+                
+                    # 🎯 姿勢角度計算（肩のライン）
+                    if (metrics_df.at[idx, 'shoulder_width'] > 0 and
+                        'left_shoulder_x' in row and 'right_shoulder_x' in row and
+                        'left_shoulder_y' in row and 'right_shoulder_y' in row):
+                    
+                        left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
+                        right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
+                    
+                        if left_x > 0 and right_x > 0:
+                            # 肩のラインの角度計算
+                            angle_rad = np.arctan2(right_y - left_y, right_x - left_x)
+                            angle_deg = np.degrees(angle_rad)
+                            metrics_df.at[idx, 'pose_angle'] = angle_deg
+                            pose_angle_count += 1
+                
+                    # 🎯 キーポイント完全性スコア
+                    available_keypoints = ['left_ear', 'right_ear', 'left_shoulder', 'right_shoulder']
+                    valid_keypoints = 0
+                    total_keypoints = len(available_keypoints)
+                
+                    for kpt in available_keypoints:
+                        x_col, y_col, conf_col = f"{kpt}_x", f"{kpt}_y", f"{kpt}_conf"
+                        if (x_col in row and y_col in row and conf_col in row):
+                            if float(row[conf_col]) > 0.3 and float(row[x_col]) > 0 and float(row[y_col]) > 0:
+                                valid_keypoints += 1
+                
+                    completeness = valid_keypoints / total_keypoints
+                    metrics_df.at[idx, 'keypoint_completeness'] = completeness
+                
+                    # 🎯 ポーズ信頼度（基本検出信頼度 × キーポイント完全性）
+                    pose_confidence = float(row['conf']) * completeness
+                    metrics_df.at[idx, 'pose_confidence'] = pose_confidence
+                
+                    calculated_count += 1
+                
+                except Exception as row_error:
+                    self.logger.debug(f"行 {idx} のメトリクス計算エラー: {row_error}")
+                    continue
+        
+            # 計算結果統計
+            total_rows = len(metrics_df)
+            self.logger.info(f"📊 メトリクス計算完了:")
+            self.logger.info(f"  処理行数: {calculated_count}/{total_rows}")
+            self.logger.info(f"  肩幅計算: {shoulder_width_count}行")
+            self.logger.info(f"  頭部位置: {head_position_count}行")
+            self.logger.info(f"  姿勢角度: {pose_angle_count}行")
+        
+            # 統計サマリー
+            if calculated_count > 0:
+                avg_shoulder_width = metrics_df[metrics_df['shoulder_width'] > 0]['shoulder_width'].mean()
+                avg_completeness = metrics_df['keypoint_completeness'].mean()
+                avg_pose_conf = metrics_df['pose_confidence'].mean()
+            
+                self.logger.info(f"📊 メトリクス統計:")
+                self.logger.info(f"  平均肩幅: {avg_shoulder_width:.1f}px")
+                self.logger.info(f"  平均完全性: {avg_completeness:.2f}")
+                self.logger.info(f"  平均ポーズ信頼度: {avg_pose_conf:.2f}")
+        
+            return metrics_df
+        
         except Exception as e:
             self.logger.error(f"❌ 4点メトリクス計算エラー: {e}")
+            # エラー時は基本データフレームを返す
+            return df
 
     def create_4point_visualization(self, csv_path, video_path, output_dir):
-        """4点キーポイント専用可視化生成"""
+        """4点キーポイント専用可視化生成（完全修正版・フレーム対応解決）"""
         try:
             import cv2
             import pandas as pd
-            
+            from pathlib import Path
+    
             self.logger.info("🎨 4点可視化生成開始")
-            
+    
             # 出力ディレクトリ
             vis_dir = Path(output_dir) / "visualized_frames_4points"
             vis_dir.mkdir(exist_ok=True)
-            
+    
             # CSV読み込み
             df = pd.read_csv(csv_path)
-            
-            # 動画読み込み
-            cap = cv2.VideoCapture(str(video_path))
-            if not cap.isOpened():
-                raise ValueError(f"動画を開けません: {video_path}")
-            
-            frame_count = 0
+    
+            if df.empty:
+                self.logger.warning("⚠️ 4点CSVデータが空です")
+                return {"success": False, "error": "Empty CSV data"}
+    
+            self.logger.info(f"📋 CSV列名: {df.columns.tolist()}")
+            self.logger.info(f"📋 CSVデータ形状: {df.shape}")
+    
+            # 🔧 フレームディレクトリの確認
+            frames_dir = Path(output_dir) / "frames"
+            if not frames_dir.exists():
+                self.logger.error(f"❌ フレームディレクトリが存在しません: {frames_dir}")
+                return {"success": False, "error": "Frames directory not found"}
+    
+            frame_files = sorted(frames_dir.glob("*.jpg"))
+            if not frame_files:
+                self.logger.error("❌ フレームファイルが見つかりません")
+                return {"success": False, "error": "No frame files found"}
+    
+            self.logger.info(f"📁 フレームファイル数: {len(frame_files)}")
+            self.logger.info(f"📁 フレームファイル例: {[f.name for f in frame_files[:3]]}")
+    
+            # 🔧 フレーム番号の対応テーブル作成
+            frame_mapping = {}
+            for i, frame_file in enumerate(frame_files):
+                # test.mp4_frame0.jpg → 0
+                frame_num_from_file = i
+                frame_identifier = frame_file.name  # test.mp4_frame0.jpg
+                frame_mapping[frame_identifier] = frame_num_from_file
+                frame_mapping[frame_num_from_file] = frame_identifier
+    
+            self.logger.info(f"📋 フレーム対応例: {list(frame_mapping.items())[:5]}")
+    
+            # キーポイント列の確認
+            keypoint_columns = {
+                'left_ear': {'x': 'left_ear_x', 'y': 'left_ear_y', 'conf': 'left_ear_conf'},
+                'right_ear': {'x': 'right_ear_x', 'y': 'right_ear_y', 'conf': 'right_ear_conf'},
+                'left_shoulder': {'x': 'left_shoulder_x', 'y': 'left_shoulder_y', 'conf': 'left_shoulder_conf'},
+                'right_shoulder': {'x': 'right_shoulder_x', 'y': 'right_shoulder_y', 'conf': 'right_shoulder_conf'}
+            }
+    
+            # 列の存在確認
+            missing_columns = []
+            for kpt_name, cols in keypoint_columns.items():
+                for col_type, col_name in cols.items():
+                    if col_name not in df.columns:
+                        missing_columns.append(col_name)
+    
+            if missing_columns:
+                self.logger.warning(f"⚠️ 不足列: {missing_columns}")
+    
             saved_count = 0
-            
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                
-                # 該当フレームのデータ
-                frame_data = df[df['frame'] == frame_count]
-                
+            total_detections = 0
+            processed_frames = 0
+            debug_info = []
+    
+            # 🔧 各フレームに対する処理
+            for frame_file in frame_files:
+                processed_frames += 1
+                frame_identifier = frame_file.name
+        
+                # 🔧 複数の方法でCSVデータを検索
+                frame_data = None
+        
+                # 方法1: 完全なファイル名でマッチ
+                frame_data = df[df['frame'] == frame_identifier]
+        
+                # 方法2: フレーム番号でマッチ（0から始まる連番）
+                if frame_data.empty:
+                    frame_index = processed_frames - 1
+                    # CSVのframe列に数値が入っている可能性
+                    numeric_frame_data = df[df['frame'] == frame_index]
+                    if not numeric_frame_data.empty:
+                        frame_data = numeric_frame_data
+        
+                # 方法3: インデックス順序でマッチ
+                if frame_data.empty and processed_frames <= len(df):
+                    frame_data = df.iloc[[processed_frames - 1]]
+        
                 if not frame_data.empty:
-                    # 4点キーポイント描画
-                    for _, row in frame_data.iterrows():
-                        frame = self.draw_4point_keypoints(frame, row)
+                    # フレーム画像読み込み
+                    frame = cv2.imread(str(frame_file))
+                    if frame is None:
+                        self.logger.warning(f"⚠️ フレーム読み込み失敗: {frame_file}")
+                        continue
+            
+                    frame_height, frame_width = frame.shape[:2]
+                    temp_frame = frame.copy()
+                    frame_detections = 0
+            
+                    for idx, row in frame_data.iterrows():
+                        # 🔧 キーポイントデータの抽出と検証
+                        keypoints = {}
+                        valid_keypoint_count = 0
+                
+                        for kpt_name, cols in keypoint_columns.items():
+                            try:
+                                x = float(row.get(cols['x'], 0))
+                                y = float(row.get(cols['y'], 0))
+                                conf = float(row.get(cols['conf'], 1.0))
+                        
+                                # 🔧 座標の有効性チェック（緩い条件）
+                                if (0 <= x <= frame_width and 
+                                    0 <= y <= frame_height and 
+                                    conf > 0.1):  # 信頼度閾値を0.3から0.1に緩和
+                                    keypoints[kpt_name] = (int(x), int(y), conf)
+                                    valid_keypoint_count += 1
+                            except (ValueError, TypeError) as e:
+                                continue
+                
+                        # 🔧 デバッグ情報記録
+                        if processed_frames <= 3:  # 最初の3フレームのデバッグ
+                            debug_info.append({
+                                'frame': frame_identifier,
+                                'valid_keypoints': valid_keypoint_count,
+                                'keypoints': keypoints,
+                                'row_data': {k: row.get(k) for k in ['left_ear_x', 'left_ear_y', 'left_ear_conf']}
+                            })
+                
+                        # 🔧 1点でも有効なキーポイントがあれば描画
+                        if valid_keypoint_count >= 1:  # 4から1に条件緩和
+                            temp_frame = self.draw_4point_keypoints_robust(temp_frame, keypoints, row)
+                            frame_detections += 1
+            
+                    # 🔧 1つでも検出があれば保存
+                    if frame_detections > 0:
+                        output_filename = f"4pt_{frame_file.name}"
+                        output_path = vis_dir / output_filename
+                        success = cv2.imwrite(str(output_path), temp_frame)
+                
+                        if success:
+                            saved_count += 1
+                            total_detections += frame_detections
                     
-                    # フレーム保存
-                    frame_file = vis_dir / f"frame_{frame_count:06d}.jpg"
-                    cv2.imwrite(str(frame_file), frame)
-                    saved_count += 1
-                
-                frame_count += 1
-                
-                # 進捗表示
-                if frame_count % 50 == 0:
-                    self.logger.info(f"🎨 4点可視化進捗: {frame_count}フレーム")
-            
-            cap.release()
-            
-            self.logger.info(f"✅ 4点可視化完了: {saved_count}フレーム保存")
-            return {"success": True, "frames_saved": saved_count, "output_dir": str(vis_dir)}
-            
+                            # 最初の5枚の保存成功をログ
+                            if saved_count <= 5:
+                                self.logger.info(f"✅ 4点画像保存成功: {output_filename} (検出: {frame_detections})")
+                        else:
+                            self.logger.warning(f"❌ 画像保存失敗: {output_path}")
+        
+                # 進捗表示（頻度を下げる）
+                if processed_frames % 100 == 0:
+                    self.logger.info(f"🎨 4点可視化進捗: {processed_frames}フレーム (保存済み: {saved_count})")
+    
+            # 🔧 デバッグ情報出力
+            if debug_info:
+                self.logger.info("🔧 デバッグ情報（最初の3フレーム）:")
+                for info in debug_info:
+                    self.logger.info(f"  フレーム: {info['frame']}, 有効キーポイント: {info['valid_keypoints']}")
+                    self.logger.info(f"  サンプルデータ: {info['row_data']}")
+    
+            self.logger.info(f"✅ 4点可視化完了: {saved_count}フレーム保存 (検出数: {total_detections})")
+            self.logger.info(f"📊 処理統計: {processed_frames}フレーム処理, 成功率: {(saved_count/processed_frames)*100:.1f}%")
+        
+            return {
+                "success": True, 
+                "frames_saved": saved_count, 
+                "total_detections": total_detections,
+                "processed_frames": processed_frames,
+                "output_dir": str(vis_dir),
+                "debug_info": debug_info
+                }
+        
         except Exception as e:
             self.logger.error(f"❌ 4点可視化エラー: {e}")
+            import traceback
+            self.logger.error(f"🔧 詳細エラー: {traceback.format_exc()}")
             return {"success": False, "error": str(e)}
 
-    def draw_4point_keypoints(self, frame, row):
-        """フレームに4点キーポイント描画"""
+    def draw_4point_keypoints_robust(self, frame, keypoints, row):
+        """4点キーポイント描画（検出枠＋ID表示付き、文字ラベルなし）"""
         try:
             import cv2
-            
-            # 色定義
-            ear_color = (0, 255, 0)      # 緑（耳）
-            shoulder_color = (255, 0, 0)  # 青（肩）
-            line_color = (0, 255, 255)    # 黄（線）
-            text_color = (255, 255, 255)  # 白（テキスト）
-            
-            # 4点キーポイント取得
-            keypoints = {}
-            for name in ['left_ear', 'right_ear', 'left_shoulder', 'right_shoulder']:
-                x = row.get(f'kpt4_{name}_x', 0)
-                y = row.get(f'kpt4_{name}_y', 0)
-                conf = row.get(f'kpt4_{name}_conf', 0)
+
+            # 🎨 シンプル2色設定
+            ear_color = (100, 180, 100)     # 落ち着いたグリーン（耳）
+            shoulder_color = (100, 100, 180) # 落ち着いたレッド（肩）
+        
+            # 描画設定
+            point_radius = 5         # キーポイントのサイズ
+            outer_radius = 7        # 白い外枠
+            line_thickness = 2      # 接続線の太さ
+        
+            drawn_points = 0
+
+            # 🔲 検出枠の描画
+            try:
+                if hasattr(row, 'get'):
+                    x1 = int(row.get('x1', 0))
+                    y1 = int(row.get('y1', 0))
+                    x2 = int(row.get('x2', 0))
+                    y2 = int(row.get('y2', 0))
+                    person_id = row.get('person_id', '?')
+                    conf = float(row.get('conf', 0))
                 
-                if conf > 0.3 and x > 0 and y > 0:
-                    keypoints[name] = (int(x), int(y), conf)
+                    if x1 > 0 and y1 > 0 and x2 > x1 and y2 > y1:
+                        # 検出枠の描画（緑色）
+                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    
+                        # 🏷️ ID＋信頼度表示（背景付き）
+                        id_text = f"ID:{person_id} ({conf:.2f})"
+                        text_size = 0.6
+                        text_thickness = 1
+                    
+                        # テキストサイズ計算
+                        (text_w, text_h), baseline = cv2.getTextSize(id_text, cv2.FONT_HERSHEY_SIMPLEX, text_size, text_thickness)
+                    
+                        # 背景矩形
+                        bg_x1 = x1
+                        bg_y1 = y1 - text_h - 10
+                        bg_x2 = x1 + text_w + 10
+                        bg_y2 = y1
+                    
+                        # 背景描画（半透明黒）
+                        overlay = frame.copy()
+                        cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
+                        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+                    
+                        # テキスト描画（白）
+                        cv2.putText(frame, id_text, (x1 + 5, y1 - 5), 
+                                cv2.FONT_HERSHEY_SIMPLEX, text_size, (255, 255, 255), text_thickness)
+            except Exception as e:
+                self.logger.debug(f"検出枠描画エラー: {e}")
+
+            # 🎯 各キーポイントの描画（文字ラベルなし）
+            for kpt_name, (x, y, conf) in keypoints.items():
+                # 肩と耳で色分け
+                if 'ear' in kpt_name:
+                    color = ear_color
+                elif 'shoulder' in kpt_name:
+                    color = shoulder_color
+                else:
+                    color = (128, 128, 128)  # デフォルトグレー
             
-            # キーポイント描画
+                try:
+                    # メインの点
+                    cv2.circle(frame, (x, y), point_radius, color, -1)
+                
+                    # 白い外枠（見やすさのため）
+                    cv2.circle(frame, (x, y), outer_radius, (255, 255, 255), 1)
+                
+                    drawn_points += 1
+                
+                except Exception as e:
+                    self.logger.debug(f"キーポイント描画スキップ: {kpt_name} - {e}")
+                    continue
+
+            # 🔗 接続線の描画
+            try:
+                # 肩のライン（肩の色で）
+                if 'left_shoulder' in keypoints and 'right_shoulder' in keypoints:
+                    left_shoulder = keypoints['left_shoulder']
+                    right_shoulder = keypoints['right_shoulder']
+                    cv2.line(frame, 
+                            (left_shoulder[0], left_shoulder[1]), 
+                            (right_shoulder[0], right_shoulder[1]), 
+                            shoulder_color, line_thickness)
+                
+                # 耳のライン（耳の色で、細め）
+                if 'left_ear' in keypoints and 'right_ear' in keypoints:
+                    left_ear = keypoints['left_ear']
+                    right_ear = keypoints['right_ear']
+                    cv2.line(frame, 
+                            (left_ear[0], left_ear[1]), 
+                            (right_ear[0], right_ear[1]), 
+                            ear_color, 1)  # より細い線
+            except:
+                pass
+
+            return frame
+
+        except Exception as e:
+            self.logger.error(f"❌ キーポイント描画エラー: {e}")
+            return frame
+
+    def draw_4point_keypoints_dynamic(self, frame, keypoint_data, row):
+        """動的4点キーポイント描画"""
+        try:
+            import cv2
+            import numpy as np
+        
+            # ⚡ より目立つ色とサイズ
+            ear_color = (0, 255, 0)       # 緑（耳）
+            shoulder_color = (0, 100, 255) # オレンジ（肩）
+            line_color = (0, 255, 255)     # 黄（線）
+            text_color = (255, 255, 255)   # 白（テキスト）
+        
+            # ⚡ キーポイント描画
             ear_points = []
             shoulder_points = []
-            
-            for name, (x, y, conf) in keypoints.items():
+        
+            for name, (x, y, conf) in keypoint_data.items():
                 color = ear_color if 'ear' in name else shoulder_color
-                
-                # キーポイント円
-                cv2.circle(frame, (x, y), 6, color, -1)
-                cv2.circle(frame, (x, y), 8, text_color, 2)
-                
-                # ラベル
-                cv2.putText(frame, f"{name}:{conf:.2f}", (x + 10, y - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
-                
+            
+                # ⚡ 大きな円で描画
+                cv2.circle(frame, (x, y), 8, color, -1)  
+                cv2.circle(frame, (x, y), 12, text_color, 2)
+            
+                # ⚡ キーポイント名と信頼度
+                cv2.putText(frame, f"{name.split('_')[0]}:{conf:.2f}", 
+                        (x + 10, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            
                 # 点を分類
                 if 'ear' in name:
                     ear_points.append((x, y))
                 elif 'shoulder' in name:
                     shoulder_points.append((x, y))
-            
-            # 肩ライン描画
+        
+            # ⚡ 肩ライン
             if len(shoulder_points) == 2:
-                cv2.line(frame, shoulder_points[0], shoulder_points[1], line_color, 3)
-                
-                # 肩幅表示
-                if 'shoulder_width' in row and not pd.isna(row['shoulder_width']):
-                    mid_x = (shoulder_points[0][0] + shoulder_points[1][0]) // 2
-                    mid_y = (shoulder_points[0][1] + shoulder_points[1][1]) // 2
-                    cv2.putText(frame, f"SW:{row['shoulder_width']:.1f}", 
-                               (mid_x, mid_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, line_color, 2)
-            
-            # 頭部中心描画
+                cv2.line(frame, shoulder_points[0], shoulder_points[1], line_color, 4)
+        
+            # ⚡ 頭部中心
             if len(ear_points) == 2:
                 head_x = (ear_points[0][0] + ear_points[1][0]) // 2
                 head_y = (ear_points[0][1] + ear_points[1][1]) // 2
-                cv2.circle(frame, (head_x, head_y), 4, line_color, -1)
-            
+                cv2.circle(frame, (head_x, head_y), 6, line_color, -1)
+        
             # 人物ID表示
             person_id = row.get('person_id', -1)
-            if person_id != -1 and keypoints:
-                all_points = list(keypoints.values())
+            if person_id != -1 and keypoint_data:
+                all_points = list(keypoint_data.values())
                 center_x = int(np.mean([p[0] for p in all_points]))
                 center_y = int(np.mean([p[1] for p in all_points])) - 30
-                
-                quality_score = row.get('keypoint_quality_score', 0)
-                text = f"ID:{person_id} Q:{quality_score:.2f}"
-                cv2.putText(frame, text, (center_x, center_y),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
             
+                cv2.putText(frame, f"ID:{person_id}", (center_x, center_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, text_color, 2)
+        
             return frame
-            
+        
         except Exception as e:
-            self.logger.warning(f"フレーム描画エラー: {e}")
+            self.logger.warning(f"動的描画エラー: {e}")
             return frame
 
     @handle_errors(error_category=ErrorCategory.EXPERIMENT)
@@ -2271,380 +3131,501 @@ class ImprovedYOLOAnalyzer:
 
 def main():
     """
-    メイン実行関数（完全統合版）
+    メイン実行関数（4点キーポイント対応完全修正版）
     """
-    # コマンドライン引数の解析
+    # アスキーアートとバージョン情報
+    print("""
+    ╔══════════════════════════════════════════════════════════════════════╗
+    ║                     🎯 YOLO11 姿勢分析システム v2.1                    ║
+    ║                        キーポイント検出・追跡・解析                        ║
+    ╚══════════════════════════════════════════════════════════════════════╝
+    """)
+
+    # コマンドライン引数パーサーの設定
     parser = argparse.ArgumentParser(
-        description="YOLO11 広角カメラ分析システム（完全統合版・フォールバック対応）",
+        description="🎯 YOLO11姿勢分析システム - 動画から人物の姿勢を分析します",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-🎯 使用例:
-  # ベースライン分析（標準モード）
-  python improved_main.py --mode baseline --config configs/default.yaml
-  
-  # ベースライン分析（深度推定モード）
-  python improved_main.py --mode baseline --config configs/depth_config.yaml
-  
-  # 🎯 4点キーポイントモード
-  python improved_main.py --mode baseline --use-4points --keypoint-threshold 0.4
-  
-  # 実験分析
-  python improved_main.py --mode experiment --experiment-type tile_inference
-  
-  # 特定動画の分析
-  python improved_main.py --mode baseline --video path/to/video.mp4
-  
-  # 詳細ログ + エラーレポート
-  python improved_main.py --mode baseline --verbose --generate-report
+使用例:
+    # 基本的な姿勢分析
+    python improved_main.py input.mp4
+
+    # 4点キーポイント分析（高精度）
+    python improved_main.py input.mp4 --use-4points --keypoint-threshold 0.5
+
+    # 深度推定付き分析
+    python improved_main.py input.mp4 --enable-depth --depth-model dpt_hybrid
+
+    # カスタム設定ファイル使用
+    python improved_main.py input.mp4 --config custom_config.yaml
+
+    # 高解像度処理
+    python improved_main.py input.mp4 --resolution 1920x1080 --quality high
         """
     )
-    
+
+    # 必須引数
     parser.add_argument(
-        "--mode", 
-        choices=["baseline", "experiment"], 
-        default="baseline",
-        help="実行モード: baseline=ベースライン分析, experiment=実験分析"
+        'video_path',
+        type=str,
+        help='🎬 分析対象の動画ファイルパス'
     )
-    
+
+    # オプション引数
     parser.add_argument(
-        "--config", 
-        default="configs/default.yaml",
-        help="設定ファイルパス（デフォルト: configs/default.yaml）"
+        '--config',
+        type=str,
+        default=None,
+        help='⚙️ 設定ファイルパス（YAML/JSON形式）'
     )
-    
+
     parser.add_argument(
-        "--video",
-        help="分析対象動画ファイルパス（指定しない場合は設定ファイルのvideo_dirから自動選択）"
+        '--output-dir',
+        type=str,
+        default=None,
+        help='📁 出力ディレクトリ（デフォルト: results/動画名_YYYYMMDD_HHMMSS）'
     )
-    
+
+    # 🎯 4点キーポイント関連オプション
     parser.add_argument(
-        "--experiment-type",
-        default="comparison",
-        help="実験タイプ（mode=experimentの場合のみ有効）"
+        '--use-4points',
+        action='store_true',
+        help='🦴 4点キーポイントモードを有効化（耳2点 + 肩2点）'
     )
-    
-    # 🎯 4点キーポイント専用引数をここに追加
+
     parser.add_argument(
-        "--use-4points",
-        action="store_true",
-        help="4点キーポイントモードを有効化（両耳・両肩のみ）"
-    )
-    
-    parser.add_argument(
-        "--keypoint-threshold",
+        '--keypoint-threshold',
         type=float,
         default=0.3,
-        help="キーポイント信頼度閾値（0.0-1.0、デフォルト: 0.3）"
-    )
-    
-    parser.add_argument(
-        "--disable-shoulder-metrics",
-        action="store_true",
-        help="肩幅・姿勢解析を無効化"
-    )
-    
-    parser.add_argument(
-        "--disable-head-tracking",
-        action="store_true",
-        help="頭部位置追跡を無効化"
-    )
-    
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="詳細ログ出力"
-    )
-    
-    parser.add_argument(
-        "--generate-report",
-        action="store_true", 
-        help="処理後にエラーレポートを生成"
+        help='🎯 キーポイント信頼度閾値（デフォルト: 0.3）'
     )
 
+    parser.add_argument(
+        '--disable-shoulder-metrics',
+        action='store_true',
+        help='🚫 肩幅メトリクスを無効化'
+    )
+
+    parser.add_argument(
+        '--disable-head-tracking',
+        action='store_true',
+        help='🚫 頭部追跡機能を無効化'
+    )
+
+    # 深度推定オプション
+    parser.add_argument(
+        '--enable-depth',
+        action='store_true',
+        help='🌊 深度推定機能を有効化'
+    )
+
+    parser.add_argument(
+        '--depth-model',
+        type=str,
+        default='dpt_hybrid',
+        choices=['dpt_hybrid', 'midas', 'dpt_large'],
+        help='🧠 深度推定モデルの選択'
+    )
+
+    # 処理オプション
+    parser.add_argument(
+        '--resolution',
+        type=str,
+        default=None,
+        help='📐 処理解像度（例: 1920x1080, 1280x720）'
+    )
+
+    parser.add_argument(
+        '--fps',
+        type=int,
+        default=None,
+        help='🎬 処理FPS（フレーム間引き用）'
+    )
+
+    parser.add_argument(
+        '--quality',
+        type=str,
+        default='medium',
+        choices=['low', 'medium', 'high', 'ultra'],
+        help='🎨 処理品質レベル'
+    )
+
+    parser.add_argument(
+        '--skip-frames',
+        type=int,
+        default=0,
+        help='⏭️ スキップフレーム数（処理高速化用）'
+    )
+
+    # デバッグオプション
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='🐛 デバッグモードを有効化'
+    )
+
+    parser.add_argument(
+        '--log-level',
+        type=str,
+        default='INFO',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+        help='📝 ログレベル'
+    )
+
+    parser.add_argument(
+        '--save-intermediate',
+        action='store_true',
+        help='💾 中間ファイルを保存'
+    )
+
+    # モデルオプション
+    parser.add_argument(
+        '--model-size',
+        type=str,
+        default='x',
+        choices=['n', 's', 'm', 'l', 'x'],
+        help='🎯 YOLOモデルサイズ（n=nano, s=small, m=medium, l=large, x=xlarge）'
+    )
+
+    parser.add_argument(
+        '--confidence-threshold',
+        type=float,
+        default=0.3,
+        help='🎯 検出信頼度閾値'
+    )
+
+    parser.add_argument(
+        '--iou-threshold',
+        type=float,
+        default=0.45,
+        help='📐 IoU閾値（重複検出除去用）'
+    )
+
+    # 出力オプション
+    parser.add_argument(
+        '--disable-visualization',
+        action='store_true',
+        help='🚫 可視化出力を無効化'
+    )
+
+    parser.add_argument(
+        '--output-format',
+        type=str,
+        default='csv',
+        choices=['csv', 'json', 'both'],
+        help='📊 出力データ形式'
+    )
+
+    # 引数解析
     args = parser.parse_args()
 
-    # 🎯 4点キーポイント設定の動的更新をここに追加
-    if args.use_4points:
-        print("🎯 4点キーポイントモードを強制有効化")
-        print(f"📊 信頼度閾値: {args.keypoint_threshold}")
-        
-        if args.disable_shoulder_metrics:
-            print("📏 肩幅・姿勢解析を無効化")
-        
-        if args.disable_head_tracking:
-            print("👤 頭部位置追跡を無効化")
+    # 🔧 ログレベル設定
+    log_level = getattr(logging, args.log_level.upper())
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('yolo_pose_analysis.log', encoding='utf-8')
+        ]
+    )
+    logger = logging.getLogger(__name__)
 
-    # ログレベル設定
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
-    
-    # ロガー初期化
-    logger = setup_logger()
-
-    logger.info("🚀 YOLO11 広角カメラ分析システム 開始（完全統合版）")
-    logger.info(f"📋 実行モード: {args.mode}")
-    logger.info(f"⚙️ 設定ファイル: {args.config}")
-    logger.info(f"📊 詳細ログ: {'有効' if args.verbose else '無効'}")
-    
-    # 🎯 4点キーポイントモードのログ出力
-    if args.use_4points:
-        logger.info("🎯 4点キーポイントモード有効")
-        logger.info(f"📊 キーポイント信頼度閾値: {args.keypoint_threshold}")
-        if args.disable_shoulder_metrics:
-            logger.info("📏 肩幅・姿勢解析: 無効")
-        if args.disable_head_tracking:
-            logger.info("👤 頭部位置追跡: 無効")
-    
-    # モジュール可用性の詳細報告
-    available_modules = []
-    fallback_modules = []
-    
-    module_status = {
-        "統一エラーハンドラー": ERROR_HANDLER_AVAILABLE,
-        "包括的評価器": COMPREHENSIVE_EVALUATOR_AVAILABLE,
-        "深度統合評価器": DEPTH_EVALUATOR_AVAILABLE,
-        "高度動画処理": VIDEO_PROCESSOR_AVAILABLE,
-        "高度メトリクス分析": METRICS_ANALYZER_AVAILABLE,
-        "高度設定管理": CONFIG_AVAILABLE,
-        "高度ログ機能": LOGGER_AVAILABLE
-    }
-    
-    for module_name, available in module_status.items():
-        if available:
-            available_modules.append(module_name)
-        else:
-            fallback_modules.append(module_name.replace("高度", "基本").replace("統一", "基本").replace("包括的", "基本").replace("深度統合", "基本"))
-        
-    if available_modules:
-        logger.info(f"✅ 利用可能な高度機能: {', '.join(available_modules)}")
-    if fallback_modules:
-        logger.info(f"🔧 フォールバック機能使用: {', '.join(fallback_modules)}")
+    # デバッグモード設定
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        logger.info("🐛 デバッグモードが有効化されました")
 
     try:
-        # 分析器初期化
-        logger.info("⚙️ 分析器初期化開始...")
-        analyzer = ImprovedYOLOAnalyzer(args.config)
-        logger.info("✅ 分析器初期化完了")
-        
-        # 🎯 4点キーポイント設定の強制適用
-        if args.use_4points:
-            # 設定オーバーライド
-            if hasattr(analyzer.config, 'data') and isinstance(analyzer.config.data, dict):
-                analyzer.config.data.setdefault('processing', {})
-                analyzer.config.data['processing']['use_4point_keypoints'] = True
-                analyzer.config.data['processing']['keypoint_confidence_threshold'] = args.keypoint_threshold
-                
-                if args.disable_shoulder_metrics:
-                    analyzer.config.data['processing']['enable_shoulder_metrics'] = False
-                    
-                if args.disable_head_tracking:
-                    analyzer.config.data['processing']['enable_head_tracking'] = False
-                    
-                logger.info("🔧 設定ファイルを4点キーポイントモード用に動的更新")
-            else:
-                logger.warning("⚠️ 設定ファイルの動的更新に失敗しました")
-        
-        # 動画ファイル決定
-        if args.video:
-            video_path = Path(args.video)
-            if not video_path.exists():
-                raise FileNotFoundError(f"指定された動画ファイルが存在しません: {video_path}")
-            video_files = [video_path]
-            logger.info(f"🎬 指定動画: {video_path.name}")
-        else:
-            video_files = analyzer.get_video_files()
-            if not video_files:
-                raise FileNotFoundError(f"動画ファイルが見つかりません。{analyzer.config.get('video_dir', 'videos')}ディレクトリに動画ファイルを配置してください")
+        # 🔧 入力検証
+        if not Path(args.video_path).exists():
+            logger.error(f"❌ 動画ファイルが見つかりません: {args.video_path}")
+            return 1
 
-        logger.info(f"🎥 処理対象動画: {len(video_files)}ファイル")
-        
-        # 4点キーポイント情報の詳細表示
+        video_path = Path(args.video_path)
+        logger.info(f"🎬 動画ファイル: {video_path}")
+
+        # 🔧 出力ディレクトリ設定
+        if args.output_dir:
+            output_dir = Path(args.output_dir)
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            video_name = video_path.stem
+            output_dir = Path("results") / f"{video_name}_{timestamp}"
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"📁 出力ディレクトリ: {output_dir}")
+
+        # 🎯 アナライザー初期化
+        try:
+            # 🔧 修正: 正しいクラス名と初期化パラメータ
+            analyzer = ImprovedYOLOAnalyzer(
+                config_path=args.config or "configs/default.yaml"
+            )
+            # 🔧 深度推定設定の適用
+            if args.enable_depth:
+                analyzer.depth_enabled = True
+                logger.info("🔍 深度推定機能を有効化")
+            
+            logger.info("✅ アナライザー初期化完了")
+        except Exception as e:
+            logger.error(f"❌ アナライザー初期化エラー: {e}")
+            import traceback
+            logger.error(f"🔧 詳細エラー: {traceback.format_exc()}")
+            return 1
+
+        # 🎯 修正: 4点キーポイント設定の確実な適用
         if args.use_4points:
-            logger.info("🎯 4点キーポイント処理設定:")
-            logger.info("   - 対象キーポイント: left_ear, right_ear, left_shoulder, right_shoulder")
-            logger.info(f"   - 信頼度閾値: {args.keypoint_threshold}")
-            logger.info(f"   - 肩幅解析: {'無効' if args.disable_shoulder_metrics else '有効'}")
-            logger.info(f"   - 頭部追跡: {'無効' if args.disable_head_tracking else '有効'}")
-        
-        # 分析実行
-        all_results = []
-        successful_count = 0
-        
-        for i, video_file in enumerate(video_files, 1):
-            logger.info(f"📹 処理開始 ({i}/{len(video_files)}): {video_file.name}")
-            
-            # 🎯 4点モードの場合の特別表示
-            if args.use_4points:
-                logger.info(f"🎯 4点キーポイントモードで処理中: {video_file.name}")
-            
             try:
-                if args.mode == "baseline":
-                    result = analyzer.run_baseline_analysis(str(video_file))
-                elif args.mode == "experiment":
-                    result = analyzer.run_experiment(str(video_file), args.experiment_type)
-                else:
-                    raise ValueError(f"不正な実行モード: {args.mode}")
-                
-                all_results.append({
-                    "video_file": str(video_file),
-                    "video_name": video_file.name,
-                    "result": result,
-                    "keypoint_mode": "4_points" if args.use_4points else "17_points"  # 🎯 追加
-                })
-                
-                if result.get("success", False):
-                    successful_count += 1
-                    # 🎯 4点モード成功の特別表示
-                    if args.use_4points:
-                        logger.info(f"✅ 4点キーポイント処理完了 ({i}/{len(video_files)}): {video_file.name}")
-                        
-                        # 4点専用結果の表示
-                        data = result.get("data", {})
-                        if "filtered_csv_path" in data:
-                            logger.info(f"📊 4点フィルタリング済みCSV: {Path(data['filtered_csv_path']).name}")
-                        if "visualization_4points" in data:
-                            vis_info = data["visualization_4points"]
-                            logger.info(f"🎨 4点可視化: {vis_info.get('frames_saved', 0)}フレーム生成")
+                # 🔧 修正: 設定オーバーライドを強化
+                if hasattr(analyzer, 'config') and hasattr(analyzer.config, 'data') and isinstance(analyzer.config.data, dict):
+                    analyzer.config.data.setdefault('processing', {})
+                    
+                    # 🔧 修正: キーポイント処理設定を確実に適用
+                    analyzer.config.data['processing']['use_4point_keypoints'] = True
+                    analyzer.config.data['processing']['keypoint_confidence_threshold'] = args.keypoint_threshold
+                    analyzer.config.data['processing']['force_pose_model'] = True  # 🔧 追加
+                    analyzer.config.data['processing']['verify_keypoint_columns'] = True  # 🔧 追加
+                    
+                    # 🔧 修正: tracker設定も確実に設定
+                    analyzer.config.data['processing'].setdefault('tracking', {})
+                    analyzer.config.data['processing']['tracking']['config'] = 'bytetrack.yaml'
+                    
+                    # 🔧 修正: 肩・頭部設定の適用
+                    if args.disable_shoulder_metrics:
+                        analyzer.config.data['processing']['enable_shoulder_metrics'] = False
+                        logger.info("🔧 肩メトリクスを無効化")
                     else:
-                        logger.info(f"✅ 処理完了 ({i}/{len(video_files)}): {video_file.name}")
-                else:
-                    logger.error(f"❌ 処理失敗 ({i}/{len(video_files)}): {video_file.name}")
-                    if result.get("error"):
-                        logger.error(f"  エラー詳細: {result['error'].get('message', '不明')}")
+                        analyzer.config.data['processing']['enable_shoulder_metrics'] = True
                         
-            except Exception as e:
-                logger.error(f"❌ 動画処理エラー ({video_file.name}): {e}")
-                all_results.append({
-                    "video_file": str(video_file),
-                    "video_name": video_file.name,
-                    "result": ResponseBuilder.error(e),
-                    "keypoint_mode": "4_points" if args.use_4points else "17_points"  # 🎯 追加
-                })
+                    if args.disable_head_tracking:
+                        analyzer.config.data['processing']['enable_head_tracking'] = False
+                        logger.info("🔧 頭部追跡を無効化")
+                    else:
+                        analyzer.config.data['processing']['enable_head_tracking'] = True
+                        
+                    logger.info("🔧 設定ファイルを4点キーポイントモード用に確実に更新")
+                    logger.info(f"   キーポイント信頼度閾値: {args.keypoint_threshold}")
+                    logger.info(f"   肩メトリクス: {'無効' if args.disable_shoulder_metrics else '有効'}")
+                    logger.info(f"   頭部追跡: {'無効' if args.disable_head_tracking else '有効'}")
+                    
+                else:
+                    # 🔧 修正: 設定がない場合の処理を強化
+                    logger.error("❌ 設定オブジェクトが不正です")
+                    logger.error("🔧 デフォルト4点設定を直接適用します")
+                    
+                    # 直接設定を作成
+                    fallback_config = {
+                        'processing': {
+                            'use_4point_keypoints': True,
+                            'keypoint_confidence_threshold': args.keypoint_threshold,
+                            'force_pose_model': True,
+                            'verify_keypoint_columns': True,
+                            'tracking': {'config': 'bytetrack.yaml'},
+                            'enable_shoulder_metrics': not args.disable_shoulder_metrics,
+                            'enable_head_tracking': not args.disable_head_tracking
+                        }
+                    }
+                    
+                    if hasattr(analyzer, 'config'):
+                        analyzer.config.data = fallback_config
+                        logger.info("✅ フォールバック設定を適用")
+                    else:
+                        logger.error("🚨 設定の適用に完全に失敗しました")
+                        logger.error("🚨 4点モードでの処理が正常に動作しない可能性があります")
+                        
+            except Exception as config_error:
+                logger.error(f"❌ 4点モード設定エラー: {config_error}")
+                logger.warning("⚠️ デフォルト設定で処理を続行します")
 
-        # 全体結果サマリー（4点モード対応）
-        total = len(all_results)
-        success_rate = (successful_count / total) * 100 if total > 0 else 0
-        
-        logger.info(f"📊 処理結果サマリー: {successful_count}/{total} 成功 ({success_rate:.1f}%)")
-        
-        # 🎯 4点キーポイントモード特有のサマリー
-        if args.use_4points:
-            logger.info("🎯 4点キーポイントモード処理サマリー:")
-            fourpoint_success = 0
-            for result_entry in all_results:
-                result = result_entry["result"]
-                if result.get("success", False) and result_entry.get("keypoint_mode") == "4_points":
-                    fourpoint_success += 1
-            
-            logger.info(f"   - 4点処理成功: {fourpoint_success}/{total}")
-            logger.info(f"   - 信頼度閾値: {args.keypoint_threshold}")
-            logger.info(f"   - 有効機能: 肩幅解析={'○' if not args.disable_shoulder_metrics else '×'}, 頭部追跡={'○' if not args.disable_head_tracking else '×'}")
-
-        # エラーレポート生成
-        if args.generate_report or analyzer.error_collector:
-            logger.info("📋 エラーレポート生成中...")
-            error_report = analyzer.generate_error_report()
-            logger.info(f"📋 エラーレポート: {error_report.get('total_errors', 0)}件のエラー")
-
-        # 統合結果ファイル保存
-        summary_result = {
-            "execution_mode": args.mode,
-            "config_file": args.config,
-            "keypoint_mode": "4_points" if args.use_4points else "17_points",  # 🎯 追加
-            "keypoint_settings": {  # 🎯 追加
-                "use_4points": args.use_4points,
-                "threshold": args.keypoint_threshold,
-                "shoulder_metrics": not args.disable_shoulder_metrics,
-                "head_tracking": not args.disable_head_tracking
-            } if args.use_4points else None,
-            "execution_timestamp": datetime.now().isoformat(),
-            "total_videos": total,
-            "successful_videos": successful_count,
-            "success_rate": success_rate,
-            "video_results": all_results,
-            "system_info": {
-                "depth_enabled": analyzer.depth_enabled,
-                "module_availability": module_status,
-                "fallback_count": len(fallback_modules),
-                "evaluator_type": type(analyzer.evaluator).__name__,
-                "processor_type": type(analyzer.processor).__name__,
-                "analyzer_type": type(analyzer.analyzer).__name__
-            },
-            "command_line_args": vars(args)
+        # 🔧 品質設定の適用
+        quality_configs = {
+            'low': {'resolution': '640x480', 'skip_frames': 2},
+            'medium': {'resolution': '1280x720', 'skip_frames': 1},
+            'high': {'resolution': '1920x1080', 'skip_frames': 0},
+            'ultra': {'resolution': '1920x1080', 'skip_frames': 0}
         }
-        
-        # 🎯 4点モード用のファイル名
-        mode_suffix = f"{args.mode}_4points" if args.use_4points else args.mode
-        summary_file = Path("outputs") / f"summary_{mode_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-        with open(summary_file, 'w', encoding='utf-8') as f:
-            json.dump(summary_result, f, indent=2, ensure_ascii=False)
-        
-        logger.info(f"📁 統合結果保存: {summary_file}")
 
-        # 処理完了
-        if successful_count == total:
-            logger.info("🎉 全ての動画処理が成功しました")
-            print(f"\n✅ 処理完了: {successful_count}/{total} 成功 (成功率: 100%)")
-            print(f"📁 結果保存先: outputs/{args.mode}/")
+        if args.quality in quality_configs:
+            quality_config = quality_configs[args.quality]
+            if not args.resolution:
+                args.resolution = quality_config['resolution']
+            if args.skip_frames == 0:
+                args.skip_frames = quality_config['skip_frames']
+
+        # 🔧 解像度設定
+        if args.resolution:
+            try:
+                width, height = map(int, args.resolution.split('x'))
+                if hasattr(analyzer.config, 'data'):
+                    analyzer.config.data.setdefault('processing', {})
+                    analyzer.config.data['processing']['target_width'] = width
+                    analyzer.config.data['processing']['target_height'] = height
+                logger.info(f"📐 解像度設定: {width}x{height}")
+            except ValueError:
+                logger.warning(f"⚠️ 不正な解像度形式: {args.resolution}")
+
+        # 🔧 その他の処理設定
+        if hasattr(analyzer.config, 'data') and analyzer.config.data:
+            processing_config = analyzer.config.data.setdefault('processing', {})
             
-            # 🎯 4点モード特有の完了メッセージ
+            # コマンドライン引数から設定を更新
+            processing_config['confidence_threshold'] = args.confidence_threshold
+            processing_config['iou_threshold'] = args.iou_threshold
+            
+            if args.fps:
+                processing_config['target_fps'] = args.fps
+                
+            processing_config['skip_frames'] = args.skip_frames
+            processing_config['save_intermediate'] = args.save_intermediate
+            processing_config['enable_visualization'] = not args.disable_visualization
+            
+            # モデルサイズ設定
+            model_size_map = {
+                'n': 'nano', 's': 'small', 'm': 'medium', 
+                'l': 'large', 'x': 'xlarge'
+            }
+            processing_config['model_size'] = model_size_map.get(args.model_size, 'xlarge')
+
+        # 🎯 メイン分析処理実行
+        logger.info("🚀 ========== 姿勢分析処理開始 ==========")
+        
+        start_time = time.time()
+        
+        try:
+            # ベースライン分析実行
+            result = analyzer.run_baseline_analysis(str(video_path))
+            
+            if not result.get("success", False):
+                error_msg = result.get("error", "不明なエラー")
+                logger.error(f"❌ 分析処理失敗: {error_msg}")
+                return 1
+                
+            processing_time = time.time() - start_time
+            logger.info(f"⏱️ 総処理時間: {processing_time:.2f}秒")
+            
+            # 🎯 結果のレポート生成
+            data = result.get("data", {})
+            
+            # 🔧 修正: 実際の統計を正しく取得
+            if result and isinstance(result, dict):
+                result_data = result.get("data", {})
+            
+                # CSVファイルから実際の統計を取得
+                csv_path = result_data.get("csv_path")
+                if csv_path and Path(csv_path).exists():
+                    import pandas as pd
+                    df = pd.read_csv(csv_path)
+                    total_detections = len(df)
+                    total_frames = len(df['frame'].unique()) if 'frame' in df.columns else 0
+                    unique_ids = len(df['person_id'].unique()) if 'person_id' in df.columns else 0
+                else:
+                    # フォールバック: 基本統計から取得
+                    total_detections = data.get("total_detections", 0)
+                    total_frames = data.get("total_frames", 0)
+                    unique_ids = data.get("unique_ids", 0)
+            else:
+                # フォールバック: 基本統計から取得
+                total_detections = data.get("total_detections", 0)
+                total_frames = data.get("total_frames", 0)
+                unique_ids = data.get("unique_ids", 0)
+        
+            logger.info("📊 ========== 処理結果サマリー ==========")
+            logger.info(f"🎬 総フレーム数: {total_frames}")
+            logger.info(f"🎯 総検出数: {total_detections}")
+            logger.info(f"👥 ユニーク人物ID: {unique_ids}")
+        
+            if total_frames > 0:
+                detection_rate = total_detections / total_frames
+                logger.info(f"📈 フレーム当たり検出数: {detection_rate:.2f}")
+        
+            # キーポイント統計（4点モードの場合）
             if args.use_4points:
-                print("🎯 4点キーポイントモード処理完了!")
-                print("   - 出力: 肩幅、頭部位置、姿勢角度データを含むCSV")
-                print("   - 可視化: 4点専用の見やすい可視化フレーム")
-                print(f"   - 信頼度: {args.keypoint_threshold}以上のキーポイントのみ使用")
+                keypoint_stats = data.get("keypoint_stats", {})
+                if keypoint_stats:
+                    keypoint_frames = keypoint_stats.get("frames_with_keypoints", 0)
+                    keypoint_rate = keypoint_frames / total_frames if total_frames > 0 else 0
+                
+                    logger.info("🦴 キーポイント統計:")
+                    logger.info(f"  キーポイント検出フレーム: {keypoint_frames} ({keypoint_rate:.1%})")
+                    logger.info(f"  総キーポイント数: {keypoint_stats.get('total_keypoints', 0)}")
+                
+                    avg_keypoints = keypoint_stats.get('avg_keypoints_per_person', 0)
+                    if avg_keypoints > 0:
+                        logger.info(f"  平均キーポイント/人: {avg_keypoints:.1f}")
+        
+            # 出力ファイル一覧
+            output_files = data.get("output_files", [])
+            if output_files:
+                logger.info("📁 生成ファイル:")
+                for file_path in output_files:
+                    if Path(file_path).exists():
+                        size_mb = Path(file_path).stat().st_size / (1024 * 1024)
+                        logger.info(f"  ✅ {file_path} ({size_mb:.2f}MB)")
+                    else:
+                        logger.warning(f"  ⚠️ {file_path} (ファイルが見つかりません)")
+        
+            # パフォーマンス統計
+            fps = total_frames / processing_time if processing_time > 0 else 0
+            logger.info(f"⚡ 処理性能: {fps:.2f} FPS")
             
-            if fallback_modules:
-                print(f"🔧 フォールバック機能使用: {len(fallback_modules)}個")
-            return True
-        elif successful_count > 0:
-            logger.warning(f"⚠️ 一部の動画処理が失敗しました ({successful_count}/{total})")
-            print(f"\n⚠️ 部分的成功: {successful_count}/{total} (成功率: {success_rate:.1f}%)")
-            print(f"📋 詳細はログファイルを確認してください")
-            print(f"📁 結果保存先: outputs/{args.mode}/")
-            return True
-        else:
-            logger.error("❌ 全ての動画処理が失敗しました")
-            print(f"\n❌ 全て失敗: 0/{total}")
-            print(f"📋 詳細はログファイルとエラーレポートを確認してください")
-            return False
+            # エラー報告
+            if hasattr(analyzer, 'error_collector') and analyzer.error_collector:
+                logger.warning(f"⚠️ 処理中のエラー: {len(analyzer.error_collector)}件")
+                for i, error in enumerate(analyzer.error_collector[:5], 1):
+                    logger.warning(f"  {i}. {error}")
+                if len(analyzer.error_collector) > 5:
+                    logger.warning(f"  ... 他 {len(analyzer.error_collector) - 5}件")
+            
+            logger.info("🎯 ========== 処理完了 ==========")
+            
+            # 成功時の追加情報
+            if args.use_4points:
+                logger.info("💡 4点キーポイントデータを確認してください:")
+                logger.info("   - 4point_keypoints.csv: フィルタリング済みデータ")
+                logger.info("   - 4point_metrics.csv: 姿勢メトリクス付きデータ")
+            
+            if args.enable_depth:
+                logger.info("💡 深度推定データを確認してください:")
+                logger.info("   - depth_analysis/ ディレクトリ内の深度マップ")
+                
+            return 0
+            
+        except Exception as e:
+            logger.error(f"❌ 分析処理中にエラーが発生: {e}")
+            import traceback
+            logger.error(f"🔧 トレースバック:\n{traceback.format_exc()}")
+            return 1
 
-    except ConfigurationError as e:
-        logger.error(f"❌ 設定エラー: {e}")
-        print(f"❌ 設定エラー: {e}")
-        return False
-        
-    except FileNotFoundError as e:
-        logger.error(f"❌ ファイルエラー: {e}")
-        print(f"❌ ファイルエラー: {e}")
-        print("💡 対処法:")
-        print("  1. 動画ファイルが正しいディレクトリに配置されているか確認")
-        print("  2. 設定ファイルが存在するか確認")
-        print("  3. パスの指定が正しいか確認")
-        return False
-        
     except KeyboardInterrupt:
-        logger.info("❌ ユーザーによって処理が中断されました")
-        print("\n❌ 処理が中断されました")
-        return False
+        logger.warning("⏸️ ユーザーによる処理中断")
+        return 130
         
     except Exception as e:
         logger.error(f"❌ 予期しないエラー: {e}")
-        print(f"❌ 予期しないエラー: {e}")
-        print("💡 対処法:")
-        print("  1. ログファイル（logs/）で詳細を確認")
-        print("  2. 設定ファイルの内容を確認")
-        print("  3. 必要なモデルファイルが存在するか確認")
-        print("  4. --verbose オプションで詳細ログを出力")
-        print("  5. --generate-report でエラーレポートを生成")
-        return False
+        import traceback
+        logger.error(f"🔧 トレースバック:\n{traceback.format_exc()}")
+        return 1
 
 
 if __name__ == "__main__":
+    # システム情報出力
+    print(f"🐍 Python: {sys.version}")
+    print(f"💻 Platform: {platform.platform()}")
+    print(f"🧠 CPU Count: {os.cpu_count()}")
+    
+    # GPU情報確認
     try:
-        success = main()
-        sys.exit(0 if success else 1)
-    except Exception as e:
-        print(f"❌ システムエラー: {e}")
-        logging.error(f"システムエラー: {e}")
-        sys.exit(1)
+        import torch
+        if torch.cuda.is_available():
+            print(f"🚀 CUDA: {torch.version.cuda}")
+            print(f"🎮 GPU: {torch.cuda.get_device_name(0)}")
+        else:
+            print("💻 GPU: CUDA利用不可（CPU処理）")
+    except ImportError:
+        print("⚠️ PyTorch未インストール")
+    
+    print()
+    
+    # メイン処理実行
+    sys.exit(main())

@@ -1,0 +1,62 @@
+1. モデルファイル確認
+  ./models_backup/yolo11s.pt -> 18M
+  ./models_backup/yolo11s-pose.pt -> 19M
+  ./models_backup/depth/midas_v21_384.pt -> 403M
+  ./models_backup/depth/midas_v21_small_256.pt -> 82M
+  ./models_backup/yolo11n.pt -> 5.4M
+  ./models_backup/yolo11n-pose.pt -> 6.0M
+  ./models_backup/yolo11l-pose.pt -> 51M
+  ./models_backup/yolo11x.pt -> 109M
+  ./models_backup/yolo11x-pose.pt -> 113M
+  ./models_backup/yolo11m-pose.pt -> 40M
+  ./models_backup/yolo/yolo11s.pt -> 18M
+  ./models_backup/yolo/yolo11s-pose.pt -> 19M
+  ./models_backup/yolo/yolo11n.pt -> 5.4M
+  ./models_backup/yolo/yolo11n-pose.pt -> 6.0M
+  ./models_backup/yolo/yolo11x.pt -> 109M
+  ./models_backup/yolo/yolo11x-pose.pt -> 113M
+  ./models_backup/yolo/yolo11m-pose.pt -> 40M
+  ./models_backup/yolo/yolo11n-seg.pt -> 5.9M
+  ./models_backup/yolo/yolo11m.pt -> 39M
+  ./models_backup/yolo11m.pt -> 39M
+  ./models_backup/yolo11l.pt -> 49M
+  ./models/yolo11s.pt -> 18M
+  ./models/yolo11s-pose.pt -> 19M
+  ./models/depth/midas_v21_384.pt -> 403M
+  ./models/depth/midas_v21_small_256.pt -> 82M
+  ./models/yolo11n.pt -> 5.4M
+  ./models/yolo11n-pose.pt -> 6.0M
+  ./models/yolo11l-pose.pt -> 51M
+  ./models/yolo11x.pt -> 109M
+  ./models/yolo11x-pose.pt -> 113M
+  ./models/yolo11m-pose.pt -> 40M
+  ./models/yolo/yolo11s.pt -> 18M
+  ./models/yolo/yolo11s-pose.pt -> 19M
+  ./models/yolo/yolo11n.pt -> 5.4M
+  ./models/yolo/yolo11n-pose.pt -> 6.0M
+  ./models/yolo/yolo11x.pt -> 109M
+  ./models/yolo/yolo11x-pose.pt -> 113M
+  ./models/yolo/yolo11m-pose.pt -> 40M
+  ./models/yolo/yolo11n-seg.pt -> 5.9M
+  ./models/yolo/yolo11m.pt -> 39M
+  ./models/yolo11m.pt -> 39M
+  ./models/yolo11l.pt -> 49M
+
+2. 設定確認
+configs//depth_config.yaml:  detection: models/yolo/yolo11m.pt
+configs//depth_config.yaml:  pose: models/yolo/yolo11m-pose.pt
+configs//default.yaml:  detection: "models/yolo11x.pt"        # XLarge検出モデル（最高精度）
+configs//default.yaml:  pose: "models/yolo11x-pose.pt"        # XLargeポーズモデル（最高精度）
+
+3. 実行前の準備確認
+現在のディレクトリ: /Users/kumagaekazuya/yolo11_env/analysis
+Pythonパス: /Users/kumagaekazuya/yolo11_env/analysis/yolo11_env/bin/python3
+利用可能メモリ: Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                3679.
+Pages active:                             98341.
+Pages inactive:                           97398.
+Pages speculative:                          131.
+
+4. 実際の実行テスト
+zsh: command not found: timeout
+⚠️ モデル読み込みテストがタイムアウト
