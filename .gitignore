@@ -16,6 +16,13 @@ logs/
 outputs/
 runs/
 
+# Analysis specific outputs (新規追加)
+frame_analysis_results/
+normalization_analysis/
+analysis_*/
+*.txt
+*.csv
+
 # OS
 .DS_Store
 Thumbs.db
