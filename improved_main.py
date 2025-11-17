@@ -884,9 +884,9 @@ if not METRICS_ANALYZER_AVAILABLE:
         # Line 874付近のcreate_visualizationsメソッドを以下で完全置換:
 
         def create_visualizations(self, detection_results, vis_dir):
-            """基本可視化（完全版・確実な戻り値付き）"""
+            """基本可視化（日時付きディレクトリ対応版）"""
             self.logger.info(f"📈 基本可視化生成: {vis_dir}")
-    
+
             # 🔧 必ず戻り値を返すようにする（初期化）
             result = {
                 "success": False,
@@ -895,37 +895,43 @@ if not METRICS_ANALYZER_AVAILABLE:
                 "graphs_generated": 0,
                 "total_files": 0
             }
-    
+
             try:
                 from pathlib import Path
                 import json
                 from datetime import datetime
-        
-                # ディレクトリ作成
+
+                # 🔧 修正: vis_dir がすでにタイムスタンプ付きの場合はそのまま使用
                 vis_path = Path(str(vis_dir))
-                vis_path.mkdir(parents=True, exist_ok=True)
-                self.logger.info(f"📁 可視化ディレクトリ作成: {vis_path}")
         
+                # 🔧 追加: タイムスタンプが含まれていない場合のみ追加
+                if not any(char.isdigit() for char in vis_path.name[-15:]):  # 末尾15文字に数字が含まれているかチェック
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    vis_path = vis_path.parent / f"{vis_path.name}_{timestamp}"
+        
+                vis_path.mkdir(parents=True, exist_ok=True)
+                self.logger.info(f"📁 日時付き可視化ディレクトリ作成: {vis_path}")
+
                 # detection_results の詳細ログ
                 self.logger.info(f"🔧 detection_results type: {type(detection_results)}")
                 self.logger.info(f"🔧 detection_results content: {detection_results}")
-        
+
                 # CSVパス抽出
                 csv_path = None
                 data = {}
-        
+
                 if isinstance(detection_results, dict):
                     if detection_results.get("success", False):
                         data = detection_results.get("data", {})
                         csv_path = data.get("csv_path")
-                
+
                         # ネスト構造対応
                         if not csv_path and "detection_result" in data:
                             nested_data = data["detection_result"].get("data", {})
                             csv_path = nested_data.get("csv_path")
-                    
-                self.logger.info(f"🔧 検出されたCSVパス: {csv_path}")
         
+                self.logger.info(f"🔧 検出されたCSVパス: {csv_path}")
+
                 # 基本統計ファイル作成（必ず作成）
                 stats_file = vis_path / "basic_stats.json"
                 basic_stats = {
@@ -938,11 +944,11 @@ if not METRICS_ANALYZER_AVAILABLE:
                     "csv_path": str(csv_path) if csv_path else None,
                     "success": detection_results.get("success", False) if isinstance(detection_results, dict) else False
                 }
-        
+
                 with open(stats_file, 'w', encoding='utf-8') as f:
                     json.dump(basic_stats, f, indent=2, ensure_ascii=False)
                 self.logger.info(f"✅ 基本統計保存: {stats_file}")
-        
+
                 # 戻り値更新（重要！）
                 result.update({
                     "success": True,
@@ -951,29 +957,29 @@ if not METRICS_ANALYZER_AVAILABLE:
                     "total_files": 1,
                     "graphs_generated": 0
                 })
-        
-                # 統計グラフ生成（オプション）
+
+                # 統計グラフ生成（既存のコード）
                 graphs_generated = 0
-        
+
                 try:
                     # matplotlib/pandas のインポート
                     import matplotlib
                     matplotlib.use('Agg')
                     import matplotlib.pyplot as plt
                     import pandas as pd
-            
+    
                     # 簡易フォント設定
                     try:
                         plt.rcParams['font.family'] = ['Hiragino Sans', 'DejaVu Sans']
                     except:
                         plt.rcParams['font.family'] = 'DejaVu Sans'
-            
+    
                     # CSV ファイルの処理
                     if csv_path and Path(csv_path).exists():
                         self.logger.info(f"📊 CSVファイル読み込み: {csv_path}")
                         df = pd.read_csv(csv_path)
                         self.logger.info(f"📊 データ読み込み: {len(df)}行, カラム: {list(df.columns)}")
-                
+        
                         if not df.empty:
                             # 1. フレーム別検出数グラフ
                             if 'frame' in df.columns or 'frame_id' in df.columns:
@@ -988,7 +994,7 @@ if not METRICS_ANALYZER_AVAILABLE:
                                     plt.ylabel('Detection Count', fontsize=12)
                                     plt.grid(True, alpha=0.3)
                                     plt.tight_layout()
-                            
+                    
                                     timeline_path = vis_path / "detection_timeline.png"
                                     plt.savefig(timeline_path, dpi=300, bbox_inches='tight')
                                     plt.close()
@@ -996,7 +1002,7 @@ if not METRICS_ANALYZER_AVAILABLE:
                                     self.logger.info(f"✅ 時系列グラフ生成: {timeline_path}")
                                 except Exception as e:
                                     self.logger.error(f"❌ 時系列グラフエラー: {e}")
-                    
+            
                             # 2. 信頼度分布グラフ
                             if 'conf' in df.columns or 'confidence' in df.columns:
                                 try:
@@ -1012,7 +1018,7 @@ if not METRICS_ANALYZER_AVAILABLE:
                                     plt.legend()
                                     plt.grid(True, alpha=0.3)
                                     plt.tight_layout()
-                            
+                    
                                     conf_path = vis_path / "confidence_distribution.png"
                                     plt.savefig(conf_path, dpi=300, bbox_inches='tight')
                                     plt.close()
@@ -1020,7 +1026,7 @@ if not METRICS_ANALYZER_AVAILABLE:
                                     self.logger.info(f"✅ 信頼度分布グラフ生成: {conf_path}")
                                 except Exception as e:
                                     self.logger.error(f"❌ 信頼度分布グラフエラー: {e}")
-                    
+            
                             # 3. クラス分布グラフ
                             if 'class_name' in df.columns:
                                 try:
@@ -1032,7 +1038,7 @@ if not METRICS_ANALYZER_AVAILABLE:
                                     plt.ylabel('Detection Count', fontsize=12)
                                     plt.xticks(rotation=45)
                                     plt.tight_layout()
-                            
+                    
                                     class_path = vis_path / "class_distribution.png"
                                     plt.savefig(class_path, dpi=300, bbox_inches='tight')
                                     plt.close()
@@ -1040,17 +1046,17 @@ if not METRICS_ANALYZER_AVAILABLE:
                                     self.logger.info(f"✅ クラス分布グラフ生成: {class_path}")
                                 except Exception as e:
                                     self.logger.error(f"❌ クラス分布グラフエラー: {e}")
-                
+        
                         else:
                             self.logger.warning("⚠️ CSVデータが空です")
                     else:
                         self.logger.warning(f"⚠️ CSVファイルが見つからない: {csv_path}")
-                
+        
                 except ImportError as e:
                     self.logger.warning(f"⚠️ matplotlib/pandasインポートエラー: {e}")
                 except Exception as plot_error:
                     self.logger.error(f"❌ グラフ生成エラー: {plot_error}", exc_info=True)
-        
+
                 # 最終結果更新
                 total_files = 1 + graphs_generated
                 result.update({
@@ -1059,12 +1065,12 @@ if not METRICS_ANALYZER_AVAILABLE:
                     "graphs_generated": graphs_generated,
                     "total_files": total_files
                 })
-        
+
                 self.logger.info(f"🎨 可視化生成完了: 基本統計1個 + グラフ{graphs_generated}個 = 合計{total_files}個")
-        
+
                 # 🔧 必ず辞書を返す（確実性のため）
                 return result
-        
+
             except Exception as e:
                 self.logger.error(f"❌ 可視化生成全体エラー: {e}", exc_info=True)
                 # 🔧 エラー時も辞書を返す
@@ -1659,6 +1665,16 @@ class ImprovedYOLOAnalyzer:
                 ctx.add_info("video_name", video_name)
                 ctx.add_info("depth_enabled", self.depth_enabled)
 
+            # 🔧 修正: 日時ベースの出力ディレクトリ準備
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # 例: 20241117_143025
+            output_dir = Path("outputs/baseline") / f"{video_name}_{timestamp}"
+            frame_dir = output_dir / "frames"
+        
+            output_dir.mkdir(parents=True, exist_ok=True)
+            frame_dir.mkdir(parents=True, exist_ok=True)
+
+            self.logger.info(f"📁 日時付き出力ディレクトリ: {output_dir}")
+
             # 出力ディレクトリ準備
             output_dir = Path("outputs/baseline") / video_name
             frame_dir = output_dir / "frames"
@@ -2105,9 +2121,12 @@ class ImprovedYOLOAnalyzer:
 
                 self.logger.info("✅ Step 3完了: 包括的評価")
 
-                # Step 4: 可視化生成
+                # Step 4: 可視化生成（日時対応修正）
                 self.logger.info("📈 Step 4: 可視化生成開始")
-                vis_dir = output_dir / "visualizations"
+            
+                # 🔧 修正: 日時付き可視化ディレクトリ
+                vis_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                vis_dir = output_dir / f"visualizations_{vis_timestamp}"
                 vis_dir.mkdir(exist_ok=True)
 
                 try:
@@ -2139,7 +2158,7 @@ class ImprovedYOLOAnalyzer:
                     # 🔧 フォールバック用のダミー結果
                     vis_result = {"success": False, "error": str(e)}
 
-                # 統合結果の構築
+                # 統合結果の構築（日時情報追加）
                 integrated_result = {
                     "success": True,
                     "video_name": video_name,
@@ -2147,11 +2166,13 @@ class ImprovedYOLOAnalyzer:
                     "processing_type": processing_type,
                     "depth_enabled": self.depth_enabled,
                     "output_directory": str(output_dir),
+                    "visualization_path": str(vis_dir),
+                    "processing_timestamp": datetime.now().isoformat(),
+                    "folder_timestamp": timestamp,  # 🔧 追加: フォルダタイムスタンプ
+                    "visualization_timestamp": vis_timestamp,  # 🔧 追加: 可視化タイムスタンプ
                     "frame_extraction": frame_result,
                     "detection_tracking": detection_result,
                     "evaluation": evaluation_result,
-                    "visualization_path": str(vis_dir),
-                    "processing_timestamp": datetime.now().isoformat(),
                     "errors": self.error_collector.copy() if self.error_collector else [],
                     "system_info": {
                         "evaluator_type": type(self.evaluator).__name__,
@@ -2437,6 +2458,8 @@ class ImprovedYOLOAnalyzer:
             metrics_df['shoulder_width'] = 0.0
             metrics_df['head_center_x'] = 0.0
             metrics_df['head_center_y'] = 0.0
+            metrics_df['shoulder_center_x'] = 0.0 # 左右肩の中心X
+            metrics_df['shoulder_center_y'] = 0.0 # 左右肩の中心Y
             metrics_df['pose_angle'] = 0.0
             metrics_df['keypoint_completeness'] = 0.0
             metrics_df['pose_confidence'] = 0.0
@@ -2445,6 +2468,7 @@ class ImprovedYOLOAnalyzer:
             calculated_count = 0
             shoulder_width_count = 0
             head_position_count = 0
+            shoulder_center_count = 0
             pose_angle_count = 0
         
             for idx, row in metrics_df.iterrows():
@@ -2462,9 +2486,17 @@ class ImprovedYOLOAnalyzer:
                             right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
                         
                             if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
+                                # 肩幅計算
                                 shoulder_width = np.sqrt((right_x - left_x) ** 2 + (right_y - left_y) ** 2)
                                 metrics_df.at[idx, 'shoulder_width'] = shoulder_width
                                 shoulder_width_count += 1
+                            
+                                # 🔧 肩中点計算
+                                shoulder_center_x = (left_x + right_x) / 2
+                                shoulder_center_y = (left_y + right_y) / 2
+                                metrics_df.at[idx, 'shoulder_center_x'] = shoulder_center_x
+                                metrics_df.at[idx, 'shoulder_center_y'] = shoulder_center_y
+                                shoulder_center_count += 1
                 
                     # 🎯 頭部中心位置計算（left_ear, right_ear）
                     if ('left_ear_x' in row and 'right_ear_x' in row and
@@ -2479,6 +2511,7 @@ class ImprovedYOLOAnalyzer:
                             right_x, right_y = float(row['right_ear_x']), float(row['right_ear_y'])
                         
                             if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
+                            # 🔧 head_center計算（両耳の中点）
                                 head_center_x = (left_x + right_x) / 2
                                 head_center_y = (left_y + right_y) / 2
                                 metrics_df.at[idx, 'head_center_x'] = head_center_x
@@ -2529,7 +2562,8 @@ class ImprovedYOLOAnalyzer:
             self.logger.info(f"📊 メトリクス計算完了:")
             self.logger.info(f"  処理行数: {calculated_count}/{total_rows}")
             self.logger.info(f"  肩幅計算: {shoulder_width_count}行")
-            self.logger.info(f"  頭部位置: {head_position_count}行")
+            self.logger.info(f"  頭部位置(head_center): {head_position_count}行")  # 🔧 修正
+            self.logger.info(f"  肩中点計算: {shoulder_center_count}行")
             self.logger.info(f"  姿勢角度: {pose_angle_count}行")
         
             # 統計サマリー
@@ -2551,53 +2585,56 @@ class ImprovedYOLOAnalyzer:
             return df
 
     def create_4point_visualization(self, csv_path, video_path, output_dir):
-        """4点キーポイント専用可視化生成（完全修正版・フレーム対応解決）"""
+        """4点キーポイント専用可視化生成（日時付きフォルダ対応版）"""
         try:
             import cv2
             import pandas as pd
             from pathlib import Path
-    
-            self.logger.info("🎨 4点可視化生成開始")
-    
-            # 出力ディレクトリ
-            vis_dir = Path(output_dir) / "visualized_frames_4points"
+            from datetime import datetime
+
+            self.logger.info("🎨 4点可視化生成開始（日時付きフォルダ対応）")
+
+            # 🔧 日時付き可視化ディレクトリ
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            vis_dir = Path(output_dir) / f"visualized_frames_4points_{timestamp}"
             vis_dir.mkdir(exist_ok=True)
-    
+
+            self.logger.info(f"📁 4点可視化ディレクトリ: {vis_dir}")
+
             # CSV読み込み
             df = pd.read_csv(csv_path)
-    
+
             if df.empty:
                 self.logger.warning("⚠️ 4点CSVデータが空です")
                 return {"success": False, "error": "Empty CSV data"}
-    
+
             self.logger.info(f"📋 CSV列名: {df.columns.tolist()}")
             self.logger.info(f"📋 CSVデータ形状: {df.shape}")
-    
-            # 🔧 フレームディレクトリの確認
+
+            # フレームディレクトリの確認
             frames_dir = Path(output_dir) / "frames"
             if not frames_dir.exists():
                 self.logger.error(f"❌ フレームディレクトリが存在しません: {frames_dir}")
                 return {"success": False, "error": "Frames directory not found"}
-    
+
             frame_files = sorted(frames_dir.glob("*.jpg"))
             if not frame_files:
                 self.logger.error("❌ フレームファイルが見つかりません")
                 return {"success": False, "error": "No frame files found"}
-    
+
             self.logger.info(f"📁 フレームファイル数: {len(frame_files)}")
             self.logger.info(f"📁 フレームファイル例: {[f.name for f in frame_files[:3]]}")
-    
-            # 🔧 フレーム番号の対応テーブル作成
+
+            # フレーム番号の対応テーブル作成
             frame_mapping = {}
             for i, frame_file in enumerate(frame_files):
-                # test.mp4_frame0.jpg → 0
                 frame_num_from_file = i
-                frame_identifier = frame_file.name  # test.mp4_frame0.jpg
+                frame_identifier = frame_file.name
                 frame_mapping[frame_identifier] = frame_num_from_file
                 frame_mapping[frame_num_from_file] = frame_identifier
-    
+
             self.logger.info(f"📋 フレーム対応例: {list(frame_mapping.items())[:5]}")
-    
+
             # キーポイント列の確認
             keypoint_columns = {
                 'left_ear': {'x': 'left_ear_x', 'y': 'left_ear_y', 'conf': 'left_ear_conf'},
@@ -2605,77 +2642,76 @@ class ImprovedYOLOAnalyzer:
                 'left_shoulder': {'x': 'left_shoulder_x', 'y': 'left_shoulder_y', 'conf': 'left_shoulder_conf'},
                 'right_shoulder': {'x': 'right_shoulder_x', 'y': 'right_shoulder_y', 'conf': 'right_shoulder_conf'}
             }
-    
+
             # 列の存在確認
             missing_columns = []
             for kpt_name, cols in keypoint_columns.items():
                 for col_type, col_name in cols.items():
                     if col_name not in df.columns:
                         missing_columns.append(col_name)
-    
+
             if missing_columns:
                 self.logger.warning(f"⚠️ 不足列: {missing_columns}")
-    
+
             saved_count = 0
             total_detections = 0
             processed_frames = 0
             debug_info = []
-    
-            # 🔧 各フレームに対する処理
+
+            # 各フレームに対する処理
             for frame_file in frame_files:
                 processed_frames += 1
                 frame_identifier = frame_file.name
-        
-                # 🔧 複数の方法でCSVデータを検索
+    
+                # 複数の方法でCSVデータを検索
                 frame_data = None
-        
+    
                 # 方法1: 完全なファイル名でマッチ
                 frame_data = df[df['frame'] == frame_identifier]
-        
+    
                 # 方法2: フレーム番号でマッチ（0から始まる連番）
                 if frame_data.empty:
                     frame_index = processed_frames - 1
-                    # CSVのframe列に数値が入っている可能性
                     numeric_frame_data = df[df['frame'] == frame_index]
                     if not numeric_frame_data.empty:
                         frame_data = numeric_frame_data
-        
+    
                 # 方法3: インデックス順序でマッチ
                 if frame_data.empty and processed_frames <= len(df):
                     frame_data = df.iloc[[processed_frames - 1]]
-        
+    
                 if not frame_data.empty:
                     # フレーム画像読み込み
                     frame = cv2.imread(str(frame_file))
                     if frame is None:
                         self.logger.warning(f"⚠️ フレーム読み込み失敗: {frame_file}")
                         continue
-            
+        
                     frame_height, frame_width = frame.shape[:2]
                     temp_frame = frame.copy()
                     frame_detections = 0
-            
+        
                     for idx, row in frame_data.iterrows():
-                        # 🔧 キーポイントデータの抽出と検証
+                        # キーポイントデータの抽出と検証
                         keypoints = {}
                         valid_keypoint_count = 0
-                
+            
                         for kpt_name, cols in keypoint_columns.items():
                             try:
                                 x = float(row.get(cols['x'], 0))
                                 y = float(row.get(cols['y'], 0))
                                 conf = float(row.get(cols['conf'], 1.0))
-                        
-                                # 🔧 座標の有効性チェック（緩い条件）
+                    
+                                # 座標の有効性チェック（緩い条件）
                                 if (0 <= x <= frame_width and 
-                                    0 <= y <= frame_height and 
+                                   0 <= y <= frame_height and 
                                     conf > 0.1):  # 信頼度閾値を0.3から0.1に緩和
                                     keypoints[kpt_name] = (int(x), int(y), conf)
                                     valid_keypoint_count += 1
                             except (ValueError, TypeError) as e:
                                 continue
-                
-                        # 🔧 デバッグ情報記録
+            
+                        # デバッグ情報記録
                         if processed_frames <= 3:  # 最初の3フレームのデバッグ
                             debug_info.append({
                                 'frame': frame_identifier,
@@ -2683,51 +2719,52 @@ class ImprovedYOLOAnalyzer:
                                 'keypoints': keypoints,
                                 'row_data': {k: row.get(k) for k in ['left_ear_x', 'left_ear_y', 'left_ear_conf']}
                             })
-                
-                        # 🔧 1点でも有効なキーポイントがあれば描画
+            
+                        # 1点でも有効なキーポイントがあれば描画
                         if valid_keypoint_count >= 1:  # 4から1に条件緩和
                             temp_frame = self.draw_4point_keypoints_robust(temp_frame, keypoints, row)
                             frame_detections += 1
-            
-                    # 🔧 1つでも検出があれば保存
+        
+                    # 1つでも検出があれば保存
                     if frame_detections > 0:
                         output_filename = f"4pt_{frame_file.name}"
                         output_path = vis_dir / output_filename
                         success = cv2.imwrite(str(output_path), temp_frame)
-                
+            
                         if success:
                             saved_count += 1
                             total_detections += frame_detections
-                    
+                
                             # 最初の5枚の保存成功をログ
                             if saved_count <= 5:
                                 self.logger.info(f"✅ 4点画像保存成功: {output_filename} (検出: {frame_detections})")
                         else:
                             self.logger.warning(f"❌ 画像保存失敗: {output_path}")
-        
+    
                 # 進捗表示（頻度を下げる）
                 if processed_frames % 100 == 0:
                     self.logger.info(f"🎨 4点可視化進捗: {processed_frames}フレーム (保存済み: {saved_count})")
-    
-            # 🔧 デバッグ情報出力
+
+            # デバッグ情報出力
             if debug_info:
                 self.logger.info("🔧 デバッグ情報（最初の3フレーム）:")
                 for info in debug_info:
                     self.logger.info(f"  フレーム: {info['frame']}, 有効キーポイント: {info['valid_keypoints']}")
                     self.logger.info(f"  サンプルデータ: {info['row_data']}")
-    
+
             self.logger.info(f"✅ 4点可視化完了: {saved_count}フレーム保存 (検出数: {total_detections})")
             self.logger.info(f"📊 処理統計: {processed_frames}フレーム処理, 成功率: {(saved_count/processed_frames)*100:.1f}%")
-        
+    
             return {
                 "success": True, 
                 "frames_saved": saved_count, 
                 "total_detections": total_detections,
                 "processed_frames": processed_frames,
                 "output_dir": str(vis_dir),
+                "timestamp": timestamp,  # 🔧 追加: タイムスタンプ
                 "debug_info": debug_info
                 }
-        
+    
         except Exception as e:
             self.logger.error(f"❌ 4点可視化エラー: {e}")
             import traceback
@@ -2740,13 +2777,16 @@ class ImprovedYOLOAnalyzer:
             import cv2
 
             # 🎨 シンプル2色設定
-            ear_color = (100, 180, 100)     # 落ち着いたグリーン（耳）
-            shoulder_color = (100, 100, 180) # 落ち着いたレッド（肩）
+            ear_color = (100, 180, 100)         # 落ち着いたグリーン（耳）
+            shoulder_color = (100, 100, 180)    # 落ち着いたレッド（肩）
+            center_color = (255, 200, 0)        # ゴールド（中点）
+            line_color = (0, 255, 255)          # シアン（接続線）
         
             # 描画設定
             point_radius = 5         # キーポイントのサイズ
-            outer_radius = 7        # 白い外枠
-            line_thickness = 2      # 接続線の太さ
+            center_radius = 8        # 中点のサイズ（少し大きく）
+            outer_radius = 7         # 白い外枠
+            line_thickness = 2       # 接続線の太さ
         
             drawn_points = 0
 
@@ -2789,7 +2829,10 @@ class ImprovedYOLOAnalyzer:
             except Exception as e:
                 self.logger.debug(f"検出枠描画エラー: {e}")
 
-            # 🎯 各キーポイントの描画（文字ラベルなし）
+            # 🎯 各キーポイントの描画
+            ear_points = []
+            shoulder_points = []
+
             for kpt_name, (x, y, conf) in keypoints.items():
                 # 肩と耳で色分け
                 if 'ear' in kpt_name:
@@ -2815,24 +2858,57 @@ class ImprovedYOLOAnalyzer:
             # 🔗 接続線の描画
             try:
                 # 肩のライン（肩の色で）
-                if 'left_shoulder' in keypoints and 'right_shoulder' in keypoints:
-                    left_shoulder = keypoints['left_shoulder']
-                    right_shoulder = keypoints['right_shoulder']
-                    cv2.line(frame, 
-                            (left_shoulder[0], left_shoulder[1]), 
-                            (right_shoulder[0], right_shoulder[1]), 
+                if len(shoulder_points) == 2:
+                    cv2.line(frame, shoulder_points[0], shoulder_points[1], 
                             shoulder_color, line_thickness)
-                
+            
                 # 耳のライン（耳の色で、細め）
-                if 'left_ear' in keypoints and 'right_ear' in keypoints:
-                    left_ear = keypoints['left_ear']
-                    right_ear = keypoints['right_ear']
-                    cv2.line(frame, 
-                            (left_ear[0], left_ear[1]), 
-                            (right_ear[0], right_ear[1]), 
+                if len(ear_points) == 2:
+                    cv2.line(frame, ear_points[0], ear_points[1], 
                             ear_color, 1)  # より細い線
             except:
                 pass
+
+            # 🔧 中点の計算と描画（head_center統一版）
+            try:
+                # 🎯 head_center（両耳中点）の描画
+                if len(ear_points) == 2:
+                    head_center_x = (ear_points[0][0] + ear_points[1][0]) // 2
+                    head_center_y = (ear_points[0][1] + ear_points[1][1]) // 2
+                
+                    # 中点描画（ゴールド色、やや大きめ）
+                    cv2.circle(frame, (head_center_x, head_center_y), center_radius, center_color, -1)
+                    cv2.circle(frame, (head_center_x, head_center_y), center_radius + 2, (255, 255, 255), 1)
+                
+                    # 🔧 ラベル修正: H-C（Head Center）
+                    cv2.putText(frame, "H-C", (head_center_x + 10, head_center_y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, center_color, 1)
+            
+                # 🎯 肩中点の描画
+                if len(shoulder_points) == 2:
+                    shoulder_center_x = (shoulder_points[0][0] + shoulder_points[1][0]) // 2
+                    shoulder_center_y = (shoulder_points[0][1] + shoulder_points[1][1]) // 2
+                
+                    # 中点描画（ゴールド色、やや大きめ）
+                    cv2.circle(frame, (shoulder_center_x, shoulder_center_y), center_radius, center_color, -1)
+                    cv2.circle(frame, (shoulder_center_x, shoulder_center_y), center_radius + 2, (255, 255, 255), 1)
+                
+                    # ラベル描画
+                    cv2.putText(frame, "S-C", (shoulder_center_x + 10, shoulder_center_y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, center_color, 1)
+                
+                # 🔧 head_centerと肩中点を結ぶ線（体軸の可視化）
+                if len(ear_points) == 2 and len(shoulder_points) == 2:
+                    head_center = ((ear_points[0][0] + ear_points[1][0]) // 2, 
+                                  (ear_points[0][1] + ear_points[1][1]) // 2)
+                    shoulder_center = ((shoulder_points[0][0] + shoulder_points[1][0]) // 2,
+                                     (shoulder_points[0][1] + shoulder_points[1][1]) // 2)
+                
+                    # 体軸線の描画（破線風）
+                    cv2.line(frame, head_center, shoulder_center, line_color, 2)
+                
+            except Exception as e:
+                self.logger.debug(f"中点描画エラー: {e}")
 
             return frame
 
