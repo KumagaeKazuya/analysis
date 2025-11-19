@@ -1015,8 +1015,8 @@ if not METRICS_ANALYZER_AVAILABLE:
                             if 'filtered_csv_path' in data and data['filtered_csv_path'] and Path(data['filtered_csv_path']).exists():
                                 try:
                                     filtered_csv = data['filtered_csv_path']
-                                    self.logger.info(f"🎨 4点キーポイント可視化: {filtered_csv}")
-                                    vis_4pt_result = self.create_4point_visualization(filtered_csv, data.get('video_path', ''), vis_path)
+                                    self.logger.info(f"🎨 6点キーポイント可視化: {filtered_csv}")
+                                    vis_4pt_result = self.create_6point_visualization(filtered_csv, data.get('video_path', ''), vis_path)
                                     if vis_4pt_result.get("success"):
                                         graphs_generated += 1
                                         graph_files.append(vis_4pt_result.get("output_dir"))
@@ -2035,30 +2035,23 @@ class ImprovedYOLOAnalyzer:
                 # 🎯 Step 2.5: 4点キーポイント処理（オプション）
                 try:
                     original_csv = detection_result["data"]["csv_path"]
-                    filtered_result = self.filter_keypoints_to_4points(original_csv, output_dir)
-                    
-                    # 🔧 修正: 辞書から実際のCSVパスを取得
+                    filtered_result = self.filter_keypoints_to_6points(original_csv, output_dir)
                     if isinstance(filtered_result, dict) and filtered_result.get("success"):
-                        filtered_csv = filtered_result.get("fourpoint_csv")
+                        sixpoint_csv = filtered_result.get("sixpoint_csv")
                         metrics_csv = filtered_result.get("metrics_csv")
-                        
-                        # 結果に4点情報追加
-                        detection_result["data"]["filtered_csv_path"] = filtered_csv
+                        detection_result["data"]["filtered_csv_path"] = sixpoint_csv
                         detection_result["data"]["metrics_csv_path"] = metrics_csv
-                        detection_result["data"]["keypoint_mode"] = "4_points"
-                        
-                        # 🔧 修正: CSVパス（文字列）を渡す
-                        if filtered_csv and Path(filtered_csv).exists():
-                            self.logger.info(f"🎨 4点可視化生成: {filtered_csv}")
-                            vis_result = self.create_4point_visualization(filtered_csv, video_path, output_dir)
-                        #                                                ^^^^^^^^^^ 
-                        #                                                文字列パスを渡す
+                        detection_result["data"]["keypoint_mode"] = "6_points"
+                        if sixpoint_csv and Path(sixpoint_csv).exists():
+                            self.logger.info(f"🎨 6点可視化生成: {sixpoint_csv}")
+                            frame_dir = Path(output_dir) / "frames"
+                            vis_result = self.create_6point_visualization(output_dir, pd.read_csv(sixpoint_csv), frame_dir)
                         else:
-                            self.logger.error(f"❌ 4点CSVファイルが見つかりません: {filtered_csv}")
-                            vis_result = {"success": False, "error": "4点CSVファイルが見つかりません"}
+                            self.logger.error(f"❌ 6点CSVファイルが見つかりません: {sixpoint_csv}")
+                            vis_result = {"success": False, "error": "6点CSVファイルが見つかりません"}
                     else:
-                        self.logger.error(f"❌ 4点フィルタリング失敗: {filtered_result}")
-                        vis_result = {"success": False, "error": "4点フィルタリング失敗"}
+                        self.logger.error(f"❌ 6点フィルタリング失敗: {filtered_result}")
+                        vis_result = {"success": False, "error": "6点フィルタリング失敗"}
                 
                 except Exception as e:
                     self.logger.error(f"❌ 4点処理エラー: {e}")
@@ -2213,635 +2206,308 @@ class ImprovedYOLOAnalyzer:
     # Line 1100付近（run_baseline_analysisメソッドの直後）に追加:
 
     # 完全置換: Line 2184-2296
-    def filter_keypoints_to_4points(self, csv_path, output_dir):
-        """
-        🎯 4点キーポイントフィルタリング（完全修正版）
-    
-        キーポイント検出失敗時は疑似データ生成ではなく、
-        根本原因の特定と解決を促進する。
-        """
-        try:
-            self.logger.info("🎯 4点キーポイントフィルタリング開始")
-            self.logger.info(f"📂 入力CSV: {csv_path}")
-        
-            # CSVファイル存在確認
-            if not Path(csv_path).exists():
-                self.logger.error(f"❌ CSVファイルが存在しません: {csv_path}")
-                raise FileNotFoundError(f"CSVファイルが見つかりません: {csv_path}")
-        
-            # CSVデータ読み込み
-            try:
-                df = pd.read_csv(csv_path)
-                self.logger.info(f"📊 CSV読み込み完了: {len(df)}行, {len(df.columns)}列")
-            except Exception as csv_error:
-                self.logger.error(f"❌ CSV読み込みエラー: {csv_error}")
-                raise
-        
-            # 🔧 修正: より詳細な列診断とエラー処理
-            df = pd.read_csv(csv_path)
-            self.logger.info(f"📋 検出された全列: {list(df.columns)}")
-        
-            # キーポイント列の存在確認（詳細診断）
-            keypoint_columns = [col for col in df.columns if col.endswith(('_x', '_y', '_conf'))]
-        
-            if not keypoint_columns:
-                # 🚨 修正: 疑似データ生成を完全に禁止し、根本原因を特定
-                self.logger.error("🚨 致命的: キーポイント列が一切検出されていません")
-                self.logger.error(f"📊 検出された列: {list(df.columns)}")
-                self.logger.error("🔍 根本原因診断:")
-                self.logger.error("💡 解決策1: YOLOポーズモデル(-pose.pt)が使用されているか確認")
-                self.logger.error("💡 解決策2: core.pyのポーズタスク指定が正しいか確認")
-                self.logger.error("💡 解決策3: tracker設定が正しく設定されているか確認")
-            
-                # 🚨 修正: 疑似データ生成は絶対に行わない
-                raise ValueError(
-                    "キーポイント検出が完全に失敗しています。"
-                    "YOLOポーズモデル(-pose.pt)の設定とcore.pyのポーズタスク指定を確認してください。"
-                )
-            
-                # 🔧 修正: 根本原因の診断情報を提供
-                self.logger.error("🔍 根本原因診断:")
-                self.logger.error("💡 解決策1: YOLOポーズモデル(-pose.pt)が使用されているか確認")
-                self.logger.error("💡 解決策2: core.pyのポーズタスク指定が正しいか確認")
-                self.logger.error("💡 解決策3: tracker設定が正しく設定されているか確認")
-            
-                # CSVの基本情報をログ出力
-                if 'frame' in df.columns and 'person_id' in df.columns:
-                    self.logger.error(f"📊 基本検出データは存在: フレーム数 {df['frame'].nunique()}, 人物検出 {len(df)}")
-                    self.logger.error("🚨 しかし、キーポイント検出が完全に失敗しています")
-                else:
-                    self.logger.error("🚨 基本検出データも異常です")
-            
-                # 🚨 修正: 疑似データ生成は絶対に行わない
-                raise ValueError(
-                    "キーポイント検出が完全に失敗しています。"
-                    "YOLOポーズモデル(-pose.pt)の設定とcore.pyのポーズタスク指定を確認してください。"
-                    "疑似データでの処理は行いません。"
-                )
-        
-            self.logger.info(f"✅ キーポイント列検出: {len(keypoint_columns)}個")
-        
-            # 🎯 修正: 4点キーポイント（COCOフォーマット）の確実な抽出
-            target_keypoints = {
-                "left_ear": 3,      # COCO: 3番
-                "right_ear": 4,     # COCO: 4番  
-                "left_shoulder": 5, # COCO: 5番
-                "right_shoulder": 6 # COCO: 6番
-            }
-        
-            # 🔧 修正: キーポイント列の存在確認を強化
-            missing_keypoints = []
-            available_keypoints = {}
-        
-            for kpt_name, kpt_idx in target_keypoints.items():
-                x_col = f"{kpt_name}_x"
-                y_col = f"{kpt_name}_y"
-                conf_col = f"{kpt_name}_conf"
-            
-                if all(col in df.columns for col in [x_col, y_col, conf_col]):
-                    available_keypoints[kpt_name] = {
-                        'x': x_col, 'y': y_col, 'conf': conf_col,
-                        'coco_idx': kpt_idx
-                    }
-                    self.logger.debug(f"✅ キーポイント利用可能: {kpt_name}")
-                else:
-                    missing_keypoints.append(kpt_name)
-                    self.logger.error(f"❌ 欠損キーポイント: {kpt_name}")
-                
-                    # どの列が不足しているかを詳細に報告
-                    missing_cols = [col for col in [x_col, y_col, conf_col] if col not in df.columns]
-                    self.logger.error(f"   不足列: {missing_cols}")
-        
-            if missing_keypoints:
-                self.logger.error(f"🚨 必要な4点キーポイントが不足: {missing_keypoints}")
-                self.logger.error(f"✅ 利用可能なキーポイント: {list(available_keypoints.keys())}")
-            
-                # 部分的な処理を提案
-                if len(available_keypoints) >= 2:
-                    self.logger.warning(f"⚠️ 部分的な処理が可能: {len(available_keypoints)}/4点")
-                    self.logger.warning("🔧 利用可能なキーポイントのみで処理を続行します")
-                else:
-                    raise ValueError(
-                        f"4点フィルタリングに必要なキーポイントが不足しています: {missing_keypoints}\n"
-                        f"利用可能: {list(available_keypoints.keys())}\n"
-                        "最低2点のキーポイントが必要です。"
-                    )
-        
-            self.logger.info(f"🎯 使用するキーポイント: {list(available_keypoints.keys())}")
-        
-            # 🎯 4点フィルタリング処理の実行
-            filtered_data = []
-            confidence_threshold = 0.3  # デフォルト信頼度閾値
-        
-            if hasattr(self, 'config') and self.config:
-                confidence_threshold = self.config.get('processing', {}).get('keypoint_confidence_threshold', 0.3)
-        
-            self.logger.info(f"🎯 キーポイント信頼度閾値: {confidence_threshold}")
-        
-            total_detections = len(df)
-            valid_detections = 0
-        
-            for idx, row in df.iterrows():
-                # 基本検出情報を保持
-                filtered_row = {
-                    'frame': row['frame'],
-                    'person_id': row['person_id'],
-                    'x1': row['x1'],
-                    'y1': row['y1'], 
-                    'x2': row['x2'],
-                    'y2': row['y2'],
-                    'conf': row['conf'],
-                    'class_name': row['class_name']
-                }
-            
-                # 4点キーポイント情報を追加
-                valid_keypoints_count = 0
-            
-                for kpt_name, kpt_info in available_keypoints.items():
-                    x_val = row[kpt_info['x']]
-                    y_val = row[kpt_info['y']]
-                    conf_val = row[kpt_info['conf']]
-                
-                    # キーポイントデータを追加
-                    filtered_row[f"{kpt_name}_x"] = x_val
-                    filtered_row[f"{kpt_name}_y"] = y_val
-                    filtered_row[f"{kpt_name}_conf"] = conf_val
-                
-                    # 有効性チェック
-                    if conf_val >= confidence_threshold and x_val > 0 and y_val > 0:
-                        valid_keypoints_count += 1
-            
-                # 不足キーポイントはゼロ埋め
-                for missing_kpt in missing_keypoints:
-                    filtered_row[f"{missing_kpt}_x"] = 0.0
-                    filtered_row[f"{missing_kpt}_y"] = 0.0
-                    filtered_row[f"{missing_kpt}_conf"] = 0.0
-            
-                # 有効キーポイントが十分な場合のみ保持
-                min_valid_keypoints = max(1, len(available_keypoints) // 2)  # 最低半分
-                if valid_keypoints_count >= min_valid_keypoints:
-                    filtered_data.append(filtered_row)
-                    valid_detections += 1
-            
-            self.logger.info(f"📊 フィルタリング結果: {valid_detections}/{total_detections} ({valid_detections/total_detections*100:.1f}%)")
-        
-            if not filtered_data:
-                self.logger.error("🚨 フィルタリング後のデータが空です")
-                self.logger.error(f"信頼度閾値 {confidence_threshold} を下げることを検討してください")
-                raise ValueError("フィルタリング後のデータが空です。信頼度閾値を確認してください。")
-        
-            # 🎯 4点データフレーム作成
-            filtered_df = pd.DataFrame(filtered_data)
-        
-            # 🎯 4点専用メトリクス計算（実データ版）
-            self.logger.info("📊 4点専用メトリクス計算開始")
-            metrics_df = self._add_4point_metrics(filtered_df)
-        
-            # 結果保存
-            os.makedirs(output_dir, exist_ok=True)
-        
-            # 4点フィルタリング済みCSV
-            fourpoint_csv_path = os.path.join(output_dir, "4point_keypoints.csv")
-            filtered_df.to_csv(fourpoint_csv_path, index=False)
-        
-            # 4点メトリクス付きCSV
-            metrics_csv_path = os.path.join(output_dir, "4point_metrics.csv")
-            metrics_df.to_csv(metrics_csv_path, index=False)
-        
-            self.logger.info(f"✅ 4点フィルタリング完了")
-            self.logger.info(f"📁 4点データ保存: {fourpoint_csv_path}")
-            self.logger.info(f"📁 メトリクス保存: {metrics_csv_path}")
-        
-            return {
-                "success": True,
-                "fourpoint_csv": fourpoint_csv_path,
-                "metrics_csv": metrics_csv_path,
-                "valid_detections": valid_detections,
-                "total_detections": total_detections,
-                "filter_rate": valid_detections / total_detections,
-                "available_keypoints": list(available_keypoints.keys()),
-                "missing_keypoints": missing_keypoints,
-                "confidence_threshold": confidence_threshold
-            }
-        
-        except Exception as e:
-            self.logger.error(f"❌ 4点フィルタリングエラー: {e}")
-            raise
+    def filter_keypoints_to_6points(self, csv_path, output_dir):
+        import pandas as pd
+        import os
 
-    def _add_4point_metrics(self, df):
-        """4点キーポイント専用メトリクス計算（実データ版・修正版）"""
+        self.logger.info("🎯 6点キーポイントフィルタリング開始")
+        self.logger.info(f"📂 入力CSV: {csv_path}")
+
+        if not Path(csv_path).exists():
+            self.logger.error(f"❌ CSVファイルが存在しません: {csv_path}")
+            raise FileNotFoundError(f"CSVファイルが見つかりません: {csv_path}")
+
+        df = pd.read_csv(csv_path)
+        self.logger.info(f"📋 検出された全列: {list(df.columns)}")
+
+        required = [
+            "left_ear_x", "left_ear_y", "right_ear_x", "right_ear_y",
+            "left_shoulder_x", "left_shoulder_y", "right_shoulder_x", "right_shoulder_y"
+        ]
+        filtered = df.dropna(subset=required, how='any').copy()
+
+        confidence_threshold = 0.2
+        for kpt in ["left_ear", "right_ear", "left_shoulder", "right_shoulder"]:
+            conf_col = f"{kpt}_conf"
+            if conf_col in filtered.columns:
+                filtered = filtered[filtered[conf_col] >= confidence_threshold]
+
+        # head_center, shoulder_midを計算（filteredが空でも必ずカラムを追加）
+        filtered["head_center_x"] = (filtered["left_ear_x"] + filtered["right_ear_x"]) / 2
+        filtered["head_center_y"] = (filtered["left_ear_y"] + filtered["right_ear_y"]) / 2
+        filtered["shoulder_mid_x"] = (filtered["left_shoulder_x"] + filtered["right_shoulder_x"]) / 2
+        filtered["shoulder_mid_y"] = (filtered["left_shoulder_y"] + filtered["right_shoulder_y"]) / 2
+
+        os.makedirs(output_dir, exist_ok=True)
+        sixpoint_csv_path = os.path.join(output_dir, "6point_keypoints.csv")
+
+        # 空でも必ずカラムだけのDataFrameを出力
+        if len(filtered) == 0:
+            filtered = pd.DataFrame(columns=[
+                "frame", "person_id",
+                "left_ear_x", "left_ear_y", "right_ear_x", "right_ear_y",
+                "left_shoulder_x", "left_shoulder_y", "right_shoulder_x", "right_shoulder_y",
+                "head_center_x", "head_center_y", "shoulder_mid_x", "shoulder_mid_y"
+            ])
+        filtered.to_csv(sixpoint_csv_path, index=False, encoding="utf-8-sig")
+        self.logger.info(f"📁 6点データ保存: {sixpoint_csv_path}（{len(filtered)}件）")
+
+        # メトリクスも同様に
+        if len(filtered) > 0:
+            metrics_df = self._add_6point_metrics(filtered)
+        else:
+            metrics_df = filtered.copy()
+            metrics_df["shoulder_width"] = []
+            metrics_df["pose_angle"] = []
+            metrics_df["keypoint_completeness"] = []
+            metrics_df["pose_confidence"] = []
+        metrics_csv_path = os.path.join(output_dir, "6point_metrics.csv")
+        metrics_df.to_csv(metrics_csv_path, index=False, encoding="utf-8-sig")
+        self.logger.info(f"📁 メトリクス保存: {metrics_csv_path}")
+
+        return {
+            "success": True,
+            "sixpoint_csv": sixpoint_csv_path,
+            "metrics_csv": metrics_csv_path,
+            "valid_detections": len(filtered),
+            "total_detections": len(df),
+            "filter_rate": len(filtered) / len(df) if len(df) > 0 else 0
+        }
+
+    def _add_6point_metrics(self, df):
+        """6点キーポイント専用メトリクス計算"""
         try:
-            self.logger.info("📊 4点メトリクス計算開始")
-        
-            # データフレームのコピーを作成
+            self.logger.info("📊 6点メトリクス計算開始")
+
             metrics_df = df.copy()
-        
+
             # 🎯 基本メトリクス初期化
             metrics_df['shoulder_width'] = 0.0
             metrics_df['head_center_x'] = 0.0
             metrics_df['head_center_y'] = 0.0
+            metrics_df['shoulder_mid_x'] = 0.0
+            metrics_df['shoulder_mid_y'] = 0.0
             metrics_df['pose_angle'] = 0.0
             metrics_df['keypoint_completeness'] = 0.0
             metrics_df['pose_confidence'] = 0.0
-        
-            # メトリクス計算統計
+
             calculated_count = 0
             shoulder_width_count = 0
             head_position_count = 0
             pose_angle_count = 0
-        
+
             for idx, row in metrics_df.iterrows():
                 try:
-                    # 🎯 肩幅計算（left_shoulder, right_shoulder）
+                    # 🎯 肩幅計算
                     if ('left_shoulder_x' in row and 'right_shoulder_x' in row and
-                        'left_shoulder_y' in row and 'right_shoulder_y' in row and
-                        'left_shoulder_conf' in row and 'right_shoulder_conf' in row):
-                    
-                        left_shoulder_conf = float(row['left_shoulder_conf'])
-                        right_shoulder_conf = float(row['right_shoulder_conf'])
-                    
-                        if left_shoulder_conf > 0.3 and right_shoulder_conf > 0.3:
-                            left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
-                            right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
-                        
-                            if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
-                                shoulder_width = np.sqrt((right_x - left_x) ** 2 + (right_y - left_y) ** 2)
-                                metrics_df.at[idx, 'shoulder_width'] = shoulder_width
-                                shoulder_width_count += 1
-                
-                    # 🎯 頭部中心位置計算（left_ear, right_ear）
+                        'left_shoulder_y' in row and 'right_shoulder_y' in row):
+                        left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
+                        right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
+                        if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
+                            shoulder_width = np.sqrt((right_x - left_x) ** 2 + (right_y - left_y) ** 2)
+                            metrics_df.at[idx, 'shoulder_width'] = shoulder_width
+                            shoulder_width_count += 1
+
+                    # 🎯 head_center計算
                     if ('left_ear_x' in row and 'right_ear_x' in row and
-                        'left_ear_y' in row and 'right_ear_y' in row and
-                        'left_ear_conf' in row and 'right_ear_conf' in row):
-                    
-                        left_ear_conf = float(row['left_ear_conf'])
-                        right_ear_conf = float(row['right_ear_conf'])
-                    
-                        if left_ear_conf > 0.3 and right_ear_conf > 0.3:
-                            left_x, left_y = float(row['left_ear_x']), float(row['left_ear_y'])
-                            right_x, right_y = float(row['right_ear_x']), float(row['right_ear_y'])
-                        
-                            if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
-                                head_center_x = (left_x + right_x) / 2
-                                head_center_y = (left_y + right_y) / 2
-                                metrics_df.at[idx, 'head_center_x'] = head_center_x
-                                metrics_df.at[idx, 'head_center_y'] = head_center_y
-                                head_position_count += 1
-                
+                        'left_ear_y' in row and 'right_ear_y' in row):
+                        left_ear_x, left_ear_y = float(row['left_ear_x']), float(row['left_ear_y'])
+                        right_ear_x, right_ear_y = float(row['right_ear_x']), float(row['right_ear_y'])
+                        if left_ear_x > 0 and left_ear_y > 0 and right_ear_x > 0 and right_ear_y > 0:
+                            head_center_x = (left_ear_x + right_ear_x) / 2
+                            head_center_y = (left_ear_y + right_ear_y) / 2
+                            metrics_df.at[idx, 'head_center_x'] = head_center_x
+                            metrics_df.at[idx, 'head_center_y'] = head_center_y
+                            head_position_count += 1
+
+                    # 🎯 両肩の中点計算
+                    if ('left_shoulder_x' in row and 'right_shoulder_x' in row and
+                        'left_shoulder_y' in row and 'right_shoulder_y' in row):
+                        left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
+                        right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
+                        if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
+                            shoulder_mid_x = (left_x + right_x) / 2
+                            shoulder_mid_y = (left_y + right_y) / 2
+                            metrics_df.at[idx, 'shoulder_mid_x'] = shoulder_mid_x
+                            metrics_df.at[idx, 'shoulder_mid_y'] = shoulder_mid_y
+
                     # 🎯 姿勢角度計算（肩のライン）
                     if (metrics_df.at[idx, 'shoulder_width'] > 0 and
                         'left_shoulder_x' in row and 'right_shoulder_x' in row and
                         'left_shoulder_y' in row and 'right_shoulder_y' in row):
-                    
                         left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
                         right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
-                    
                         if left_x > 0 and right_x > 0:
-                            # 肩のラインの角度計算
                             angle_rad = np.arctan2(right_y - left_y, right_x - left_x)
                             angle_deg = np.degrees(angle_rad)
                             metrics_df.at[idx, 'pose_angle'] = angle_deg
                             pose_angle_count += 1
-                
-                    # 🎯 キーポイント完全性スコア
-                    available_keypoints = ['left_ear', 'right_ear', 'left_shoulder', 'right_shoulder']
+
+                    # 🎯 キーポイント完全性スコア（6点）
+                    available_keypoints = [
+                        'left_ear', 'right_ear', 'left_shoulder', 'right_shoulder',
+                        'head_center', 'shoulder_mid'
+                    ]
                     valid_keypoints = 0
                     total_keypoints = len(available_keypoints)
-                
-                    for kpt in available_keypoints:
-                        x_col, y_col, conf_col = f"{kpt}_x", f"{kpt}_y", f"{kpt}_conf"
-                        if (x_col in row and y_col in row and conf_col in row):
-                            if float(row[conf_col]) > 0.3 and float(row[x_col]) > 0 and float(row[y_col]) > 0:
-                                valid_keypoints += 1
-                
+
+                    # 4点＋head_center＋shoulder_mid
+                    for kpt in ['left_ear', 'right_ear', 'left_shoulder', 'right_shoulder']:
+                        x_col, y_col = f"{kpt}_x", f"{kpt}_y"
+                        if (x_col in row and y_col in row):
+                                if float(row[x_col]) > 0 and float(row[y_col]) > 0:
+                                    valid_keypoints += 1
+                    # head_center
+                    if ('head_center_x' in row and 'head_center_y' in row):
+                        if float(row['head_center_x']) > 0 and float(row['head_center_y']) > 0:
+                            valid_keypoints += 1
+                    # shoulder_mid
+                    if ('shoulder_mid_x' in row and 'shoulder_mid_y' in row):
+                        if float(row['shoulder_mid_x']) > 0 and float(row['shoulder_mid_y']) > 0:
+                            valid_keypoints += 1
+
                     completeness = valid_keypoints / total_keypoints
                     metrics_df.at[idx, 'keypoint_completeness'] = completeness
-                
+
                     # 🎯 ポーズ信頼度（基本検出信頼度 × キーポイント完全性）
-                    pose_confidence = float(row['conf']) * completeness
+                    pose_confidence = float(row['conf']) * completeness if 'conf' in row else completeness
                     metrics_df.at[idx, 'pose_confidence'] = pose_confidence
-                
+
                     calculated_count += 1
-                
+
                 except Exception as row_error:
-                    self.logger.debug(f"行 {idx} のメトリクス計算エラー: {row_error}")
+                    self.logger.debug(f"行 {idx} の6点メトリクス計算エラー: {row_error}")
                     continue
-        
+
             # 計算結果統計
             total_rows = len(metrics_df)
-            self.logger.info(f"📊 メトリクス計算完了:")
+            self.logger.info(f"📊 6点メトリクス計算完了:")
             self.logger.info(f"  処理行数: {calculated_count}/{total_rows}")
             self.logger.info(f"  肩幅計算: {shoulder_width_count}行")
             self.logger.info(f"  頭部位置: {head_position_count}行")
             self.logger.info(f"  姿勢角度: {pose_angle_count}行")
-        
-            # 統計サマリー
+
             if calculated_count > 0:
                 avg_shoulder_width = metrics_df[metrics_df['shoulder_width'] > 0]['shoulder_width'].mean()
                 avg_completeness = metrics_df['keypoint_completeness'].mean()
                 avg_pose_conf = metrics_df['pose_confidence'].mean()
-            
                 self.logger.info(f"📊 メトリクス統計:")
                 self.logger.info(f"  平均肩幅: {avg_shoulder_width:.1f}px")
                 self.logger.info(f"  平均完全性: {avg_completeness:.2f}")
                 self.logger.info(f"  平均ポーズ信頼度: {avg_pose_conf:.2f}")
-        
+
             return metrics_df
-        
+
         except Exception as e:
-            self.logger.error(f"❌ 4点メトリクス計算エラー: {e}")
-            # エラー時は基本データフレームを返す
+            self.logger.error(f"❌ 6点メトリクス計算エラー: {e}")
             return df
 
-    def create_4point_visualization(self, csv_path, video_path, output_dir):
-        """4点キーポイント専用可視化生成（完全修正版・フレーム対応解決）"""
-        try:
-            import cv2
-            import pandas as pd
-            from pathlib import Path
-    
-            self.logger.info("🎨 4点可視化生成開始")
-    
-            # 出力ディレクトリ
-            vis_dir = Path(output_dir) / "visualized_frames_4points"
-            vis_dir.mkdir(exist_ok=True)
-    
-            # CSV読み込み
-            df = pd.read_csv(csv_path)
-    
-            if df.empty:
-                self.logger.warning("⚠️ 4点CSVデータが空です")
-                return {"success": False, "error": "Empty CSV data"}
-    
-            self.logger.info(f"📋 CSV列名: {df.columns.tolist()}")
-            self.logger.info(f"📋 CSVデータ形状: {df.shape}")
-    
-            # 🔧 フレームディレクトリの確認
-            frames_dir = Path(output_dir) / "frames"
-            if not frames_dir.exists():
-                self.logger.error(f"❌ フレームディレクトリが存在しません: {frames_dir}")
-                return {"success": False, "error": "Frames directory not found"}
-    
-            frame_files = sorted(frames_dir.glob("*.jpg"))
-            if not frame_files:
-                self.logger.error("❌ フレームファイルが見つかりません")
-                return {"success": False, "error": "No frame files found"}
-    
-            self.logger.info(f"📁 フレームファイル数: {len(frame_files)}")
-            self.logger.info(f"📁 フレームファイル例: {[f.name for f in frame_files[:3]]}")
-    
-            # 🔧 フレーム番号の対応テーブル作成
-            frame_mapping = {}
-            for i, frame_file in enumerate(frame_files):
-                # test.mp4_frame0.jpg → 0
-                frame_num_from_file = i
-                frame_identifier = frame_file.name  # test.mp4_frame0.jpg
-                frame_mapping[frame_identifier] = frame_num_from_file
-                frame_mapping[frame_num_from_file] = frame_identifier
-    
-            self.logger.info(f"📋 フレーム対応例: {list(frame_mapping.items())[:5]}")
-    
-            # キーポイント列の確認
-            keypoint_columns = {
-                'left_ear': {'x': 'left_ear_x', 'y': 'left_ear_y', 'conf': 'left_ear_conf'},
-                'right_ear': {'x': 'right_ear_x', 'y': 'right_ear_y', 'conf': 'right_ear_conf'},
-                'left_shoulder': {'x': 'left_shoulder_x', 'y': 'left_shoulder_y', 'conf': 'left_shoulder_conf'},
-                'right_shoulder': {'x': 'right_shoulder_x', 'y': 'right_shoulder_y', 'conf': 'right_shoulder_conf'}
-            }
-    
-            # 列の存在確認
-            missing_columns = []
-            for kpt_name, cols in keypoint_columns.items():
-                for col_type, col_name in cols.items():
-                    if col_name not in df.columns:
-                        missing_columns.append(col_name)
-    
-            if missing_columns:
-                self.logger.warning(f"⚠️ 不足列: {missing_columns}")
-    
-            saved_count = 0
-            total_detections = 0
-            processed_frames = 0
-            debug_info = []
-    
-            # 🔧 各フレームに対する処理
-            for frame_file in frame_files:
-                processed_frames += 1
-                frame_identifier = frame_file.name
-        
-                # 🔧 複数の方法でCSVデータを検索
-                frame_data = None
-        
-                # 方法1: 完全なファイル名でマッチ
-                frame_data = df[df['frame'] == frame_identifier]
-        
-                # 方法2: フレーム番号でマッチ（0から始まる連番）
-                if frame_data.empty:
-                    frame_index = processed_frames - 1
-                    # CSVのframe列に数値が入っている可能性
-                    numeric_frame_data = df[df['frame'] == frame_index]
-                    if not numeric_frame_data.empty:
-                        frame_data = numeric_frame_data
-        
-                # 方法3: インデックス順序でマッチ
-                if frame_data.empty and processed_frames <= len(df):
-                    frame_data = df.iloc[[processed_frames - 1]]
-        
-                if not frame_data.empty:
-                    # フレーム画像読み込み
-                    frame = cv2.imread(str(frame_file))
-                    if frame is None:
-                        self.logger.warning(f"⚠️ フレーム読み込み失敗: {frame_file}")
-                        continue
-            
-                    frame_height, frame_width = frame.shape[:2]
-                    temp_frame = frame.copy()
-                    frame_detections = 0
-            
-                    for idx, row in frame_data.iterrows():
-                        # 🔧 キーポイントデータの抽出と検証
-                        keypoints = {}
-                        valid_keypoint_count = 0
-                
-                        for kpt_name, cols in keypoint_columns.items():
-                            try:
-                                x = float(row.get(cols['x'], 0))
-                                y = float(row.get(cols['y'], 0))
-                                conf = float(row.get(cols['conf'], 1.0))
-                        
-                                # 🔧 座標の有効性チェック（緩い条件）
-                                if (0 <= x <= frame_width and 
-                                    0 <= y <= frame_height and 
-                                    conf > 0.1):  # 信頼度閾値を0.3から0.1に緩和
-                                    keypoints[kpt_name] = (int(x), int(y), conf)
-                                    valid_keypoint_count += 1
-                            except (ValueError, TypeError) as e:
-                                continue
-                
-                        # 🔧 デバッグ情報記録
-                        if processed_frames <= 3:  # 最初の3フレームのデバッグ
-                            debug_info.append({
-                                'frame': frame_identifier,
-                                'valid_keypoints': valid_keypoint_count,
-                                'keypoints': keypoints,
-                                'row_data': {k: row.get(k) for k in ['left_ear_x', 'left_ear_y', 'left_ear_conf']}
-                            })
-                
-                        # 🔧 1点でも有効なキーポイントがあれば描画
-                        if valid_keypoint_count >= 1:  # 4から1に条件緩和
-                            temp_frame = self.draw_4point_keypoints_robust(temp_frame, keypoints, row)
-                            frame_detections += 1
-            
-                    # 🔧 1つでも検出があれば保存
-                    if frame_detections > 0:
-                        output_filename = f"4pt_{frame_file.name}"
-                        output_path = vis_dir / output_filename
-                        success = cv2.imwrite(str(output_path), temp_frame)
-                
-                        if success:
-                            saved_count += 1
-                            total_detections += frame_detections
-                    
-                            # 最初の5枚の保存成功をログ
-                            if saved_count <= 5:
-                                self.logger.info(f"✅ 4点画像保存成功: {output_filename} (検出: {frame_detections})")
-                        else:
-                            self.logger.warning(f"❌ 画像保存失敗: {output_path}")
-        
-                # 進捗表示（頻度を下げる）
-                if processed_frames % 100 == 0:
-                    self.logger.info(f"🎨 4点可視化進捗: {processed_frames}フレーム (保存済み: {saved_count})")
-    
-            # 🔧 デバッグ情報出力
-            if debug_info:
-                self.logger.info("🔧 デバッグ情報（最初の3フレーム）:")
-                for info in debug_info:
-                    self.logger.info(f"  フレーム: {info['frame']}, 有効キーポイント: {info['valid_keypoints']}")
-                    self.logger.info(f"  サンプルデータ: {info['row_data']}")
-    
-            self.logger.info(f"✅ 4点可視化完了: {saved_count}フレーム保存 (検出数: {total_detections})")
-            self.logger.info(f"📊 処理統計: {processed_frames}フレーム処理, 成功率: {(saved_count/processed_frames)*100:.1f}%")
-        
-            return {
-                "success": True, 
-                "frames_saved": saved_count, 
-                "total_detections": total_detections,
-                "processed_frames": processed_frames,
-                "output_dir": str(vis_dir),
-                "debug_info": debug_info
+    def create_6point_visualization(self, output_dir, keypoints_df, frame_dir, log_path=None):
+        """
+        frameカラムが画像ファイル名の場合に対応した6点可視化
+        """
+        import cv2
+        from pathlib import Path
+
+        vis_dir = Path(output_dir) / "visualized_frames_6points"
+        vis_dir.mkdir(parents=True, exist_ok=True)
+
+        if keypoints_df.empty:
+            self.logger.warning("⚠️ キーポイントデータが空です。可視化画像は生成されません。")
+            return {"success": False, "output_dir": str(vis_dir), "saved_count": 0}
+
+        saved_count = 0
+
+        for frame_name in keypoints_df["frame"].unique():
+            frame_path = Path(frame_dir) / frame_name
+            if not frame_path.exists():
+                self.logger.warning(f"⚠️ フレーム画像が見つかりません: {frame_path}")
+                continue
+
+            frame = cv2.imread(str(frame_path))
+            rows = keypoints_df[keypoints_df['frame'] == frame_name]
+            for _, row in rows.iterrows():
+                keypoints = {
+                    "left_ear": (row["left_ear_x"], row["left_ear_y"], row.get("left_ear_conf", 1.0)),
+                    "right_ear": (row["right_ear_x"], row["right_ear_y"], row.get("right_ear_conf", 1.0)),
+                    "left_shoulder": (row["left_shoulder_x"], row["left_shoulder_y"], row.get("left_shoulder_conf", 1.0)),
+                    "right_shoulder": (row["right_shoulder_x"], row["right_shoulder_y"], row.get("right_shoulder_conf", 1.0)),
                 }
-        
-        except Exception as e:
-            self.logger.error(f"❌ 4点可視化エラー: {e}")
-            import traceback
-            self.logger.error(f"🔧 詳細エラー: {traceback.format_exc()}")
-            return {"success": False, "error": str(e)}
+                frame = self.draw_6point_keypoints(frame, keypoints, row)
 
-    def draw_4point_keypoints_robust(self, frame, keypoints, row):
-        """4点キーポイント描画（検出枠＋ID表示付き、文字ラベルなし）"""
-        try:
-            import cv2
+            output_filename = f"6pt_{frame_name}"
+            output_path = vis_dir / output_filename
+            cv2.imwrite(str(output_path), frame)
+            saved_count += 1
 
-            # 🎨 シンプル2色設定
-            ear_color = (100, 180, 100)     # 落ち着いたグリーン（耳）
-            shoulder_color = (100, 100, 180) # 落ち着いたレッド（肩）
-        
-            # 描画設定
-            point_radius = 5         # キーポイントのサイズ
-            outer_radius = 7        # 白い外枠
-            line_thickness = 2      # 接続線の太さ
-        
-            drawn_points = 0
+        self.logger.info(f"✅ 6点可視化画像を{saved_count}枚保存しました（{vis_dir}）")
+        return {"success": True, "output_dir": str(vis_dir), "saved_count": saved_count}
+    
+    def draw_6point_keypoints(self, frame, keypoints, row, log_path=None):
+        """
+        両肩・両耳・head_center・両肩の中点を描画し、座標をログ保存
+        """
+        import cv2
+        import json
 
-            # 🔲 検出枠の描画
-            try:
-                if hasattr(row, 'get'):
-                    x1 = int(row.get('x1', 0))
-                    y1 = int(row.get('y1', 0))
-                    x2 = int(row.get('x2', 0))
-                    y2 = int(row.get('y2', 0))
-                    person_id = row.get('person_id', '?')
-                    conf = float(row.get('conf', 0))
-                
-                    if x1 > 0 and y1 > 0 and x2 > x1 and y2 > y1:
-                        # 検出枠の描画（緑色）
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    
-                        # 🏷️ ID＋信頼度表示（背景付き）
-                        id_text = f"ID:{person_id} ({conf:.2f})"
-                        text_size = 0.6
-                        text_thickness = 1
-                    
-                        # テキストサイズ計算
-                        (text_w, text_h), baseline = cv2.getTextSize(id_text, cv2.FONT_HERSHEY_SIMPLEX, text_size, text_thickness)
-                    
-                        # 背景矩形
-                        bg_x1 = x1
-                        bg_y1 = y1 - text_h - 10
-                        bg_x2 = x1 + text_w + 10
-                        bg_y2 = y1
-                    
-                        # 背景描画（半透明黒）
-                        overlay = frame.copy()
-                        cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
-                        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
-                    
-                        # テキスト描画（白）
-                        cv2.putText(frame, id_text, (x1 + 5, y1 - 5), 
-                                cv2.FONT_HERSHEY_SIMPLEX, text_size, (255, 255, 255), text_thickness)
-            except Exception as e:
-                self.logger.debug(f"検出枠描画エラー: {e}")
+        # 色設定
+        ear_color = (0, 255, 255)
+        shoulder_color = (255, 128, 0)
+        center_color = (0, 0, 255)
+        midpoint_color = (0, 255, 0)
 
-            # 🎯 各キーポイントの描画（文字ラベルなし）
-            for kpt_name, (x, y, conf) in keypoints.items():
-                # 肩と耳で色分け
-                if 'ear' in kpt_name:
-                    color = ear_color
-                elif 'shoulder' in kpt_name:
-                    color = shoulder_color
-                else:
-                    color = (128, 128, 128)  # デフォルトグレー
-            
-                try:
-                    # メインの点
-                    cv2.circle(frame, (x, y), point_radius, color, -1)
-                
-                    # 白い外枠（見やすさのため）
-                    cv2.circle(frame, (x, y), outer_radius, (255, 255, 255), 1)
-                
-                    drawn_points += 1
-                
-                except Exception as e:
-                    self.logger.debug(f"キーポイント描画スキップ: {kpt_name} - {e}")
-                    continue
+        # 両耳・両肩の座標取得
+        left_ear = keypoints.get('left_ear', None)
+        right_ear = keypoints.get('right_ear', None)
+        left_shoulder = keypoints.get('left_shoulder', None)
+        right_shoulder = keypoints.get('right_shoulder', None)
 
-            # 🔗 接続線の描画
-            try:
-                # 肩のライン（肩の色で）
-                if 'left_shoulder' in keypoints and 'right_shoulder' in keypoints:
-                    left_shoulder = keypoints['left_shoulder']
-                    right_shoulder = keypoints['right_shoulder']
-                    cv2.line(frame, 
-                            (left_shoulder[0], left_shoulder[1]), 
-                            (right_shoulder[0], right_shoulder[1]), 
-                            shoulder_color, line_thickness)
-                
-                # 耳のライン（耳の色で、細め）
-                if 'left_ear' in keypoints and 'right_ear' in keypoints:
-                    left_ear = keypoints['left_ear']
-                    right_ear = keypoints['right_ear']
-                    cv2.line(frame, 
-                            (left_ear[0], left_ear[1]), 
-                            (right_ear[0], right_ear[1]), 
-                            ear_color, 1)  # より細い線
-            except:
-                pass
+        # head_center
+        head_center_x = row.get('head_center_x')
+        head_center_y = row.get('head_center_y')
+        head_center = None
+        if head_center_x is not None and head_center_y is not None:
+            head_center = (int(head_center_x), int(head_center_y))
 
-            return frame
+        # 両肩の中点
+        shoulder_midpoint = None
+        if left_shoulder and right_shoulder:
+            shoulder_midpoint = (
+                int((left_shoulder[0] + right_shoulder[0]) / 2),
+                int((left_shoulder[1] + right_shoulder[1]) / 2)
+            )
 
-        except Exception as e:
-            self.logger.error(f"❌ キーポイント描画エラー: {e}")
-            return frame
+        # 4点＋head_center＋両肩中点を描画
+        for kpt_name, (x, y, conf) in keypoints.items():
+            if 'ear' in kpt_name:
+                color = ear_color
+            elif 'shoulder' in kpt_name:
+                color = shoulder_color
+            else:
+                color = (128, 128, 128)
+            cv2.circle(frame, (int(x), int(y)), 6, color, -1)
+
+        if head_center:
+            cv2.circle(frame, head_center, 8, center_color, -1)
+        if shoulder_midpoint:
+            cv2.circle(frame, shoulder_midpoint, 8, midpoint_color, -1)
+
+        # ログ保存
+        log_data = {
+            "frame": row.get("frame"),
+            "person_id": row.get("person_id"),
+            "left_ear": left_ear[:2] if left_ear else None,
+            "right_ear": right_ear[:2] if right_ear else None,
+            "left_shoulder": left_shoulder[:2] if left_shoulder else None,
+            "right_shoulder": right_shoulder[:2] if right_shoulder else None,
+            "head_center": head_center,
+            "shoulder_midpoint": shoulder_midpoint,
+        }
+        if log_path:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_data, ensure_ascii=False) + "\n")
+
+        return frame
 
     def draw_4point_keypoints_dynamic(self, frame, keypoint_data, row):
         """動的4点キーポイント描画"""
