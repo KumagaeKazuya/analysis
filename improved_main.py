@@ -588,135 +588,106 @@ if not VIDEO_PROCESSOR_AVAILABLE:
         
         # BasicVideoProcessor の extract_frames メソッドを修正:
 
-        def extract_frames(self, video_path, frame_dir, max_frames=1000):
-            """フレーム抽出（統計修正版）"""
-            try:
-                # 🔧 processing_statsの確実な初期化
-                if not hasattr(self, 'processing_stats'):
-                    self.processing_stats = {}
-            
-                self.logger.info(f"📸 フレーム抽出開始: {video_path}")
-                frame_dir = Path(frame_dir)
-                frame_dir.mkdir(parents=True, exist_ok=True)
+        def extract_frames(video_path, frame_dir, max_frames=1000):
+            """
+            フレーム抽出（タイムスタンプ付きディレクトリ対応・既存処理を踏襲）
+            """
+            import cv2
+            from pathlib import Path
 
-                # 動画ファイルの存在確認
-                if not Path(video_path).exists():
-                    self.logger.error(f"❌ 動画ファイルが存在しません: {video_path}")
-                    return {"success": False, "error": f"動画ファイルが存在しません: {video_path}"}
+            logger = logging.getLogger(__name__)
+            logger.info(f"📸 フレーム抽出開始: {video_path}")
+            frame_dir = Path(frame_dir)
+            frame_dir.mkdir(parents=True, exist_ok=True)
 
-                # ファイルサイズチェック
-                file_size = Path(video_path).stat().st_size
-                if file_size == 0:
-                    self.logger.error(f"❌ 動画ファイルが空です: {video_path}")
-                    return {"success": False, "error": f"動画ファイルが空です: {video_path}"}
+            # 動画ファイルの存在確認
+            if not Path(video_path).exists():
+                logger.error(f"❌ 動画ファイルが存在しません: {video_path}")
+                return {"success": False, "error": f"動画ファイルが存在しません: {video_path}"}
 
-                self.logger.info(f"📹 動画ファイルサイズ: {file_size / (1024*1024):.1f}MB")
+            cap = cv2.VideoCapture(str(video_path))
+            if not cap.isOpened():
+                logger.error(f"❌ 動画ファイルを開けません: {video_path}")
+                return {"success": False, "error": f"動画ファイルを開けません: {video_path}"}
 
-                # 🔧 OpenCVでフレーム抽出
-                cap = cv2.VideoCapture(str(video_path))
-                if not cap.isOpened():
-                    self.logger.error(f"❌ 動画ファイルを開けません: {video_path}")
-                    return {"success": False, "error": f"動画ファイルを開けません: {video_path}"}
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            duration = frame_count / fps if fps > 0 else 0
 
-                # 動画情報取得
-                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                fps = cap.get(cv2.CAP_PROP_FPS)
-                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                duration = frame_count / fps if fps > 0 else 0
+            logger.info(f"📹 動画情報: {width}x{height}, {frame_count}フレーム, {fps:.1f}FPS, {duration:.1f}秒")
 
-                self.logger.info(f"📹 動画情報: {width}x{height}, {frame_count}フレーム, {fps:.1f}FPS, {duration:.1f}秒")
+            # 抽出間隔計算
+            interval = max(1, frame_count // max_frames)
+            logger.info(f"🔢 抽出間隔: {interval} (最大{max_frames}フレーム)")
 
-                # フレーム数が0の場合のエラーハンドリング
-                if frame_count <= 0:
-                    cap.release()
-                    self.logger.error(f"❌ 有効なフレームが見つかりません: {video_path}")
-                    return {"success": False, "error": "有効なフレームが見つかりません"}
+            extracted = 0
+            frame_number = 0
 
-                # 抽出間隔計算
-                interval = max(1, frame_count // max_frames)
-                self.logger.info(f"🔢 抽出間隔: {interval} (最大{max_frames}フレーム)")
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-                # フレーム抽出ループ
-                extracted = 0
-                frame_number = 0
+                if frame_number % interval == 0:
+                    frame_path = frame_dir / f"frame_{frame_number:06d}.jpg"
+                    success = cv2.imwrite(str(frame_path), frame)
+                    if success:
+                        extracted += 1
+                        if extracted >= max_frames:
+                            break
+                    else:
+                        logger.warning(f"⚠️ フレーム保存失敗: {frame_path}")
 
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
+                frame_number += 1
 
-                    if frame_number % interval == 0:
-                        frame_path = frame_dir / f"frame_{frame_number:06d}.jpg"
-                        success = cv2.imwrite(str(frame_path), frame)
+            cap.release()
 
-                        if success:
-                            extracted += 1
-                            if extracted >= max_frames:
-                                break
-                        else:
-                            self.logger.warning(f"⚠️ フレーム保存失敗: {frame_path}")
-            
-                    frame_number += 1
+            saved_frames = len(list(frame_dir.glob("frame_*.jpg")))
+            logger.info(f"📊 抽出: {extracted}個, 実際に保存: {saved_frames}個")
 
-                cap.release()
+            final_extracted = max(extracted, saved_frames)
 
-                # 🔧 実際に保存されたフレーム数を再確認（重要！）
-                saved_frames = len(list(frame_dir.glob("frame_*.jpg")))
-                self.logger.info(f"📊 OpenCVで抽出: {extracted}個")
-                self.logger.info(f"📊 実際に保存: {saved_frames}個")
+            logger.info(f"✅ フレーム抽出完了: {final_extracted}フレーム")
 
-                # 🔧 最大値を採用（確実にフレーム数を取得）
-                final_extracted = max(extracted, saved_frames)
+            if final_extracted == 0:
+                logger.error("❌ フレーム抽出に失敗しました")
+                return {"success": False, "error": "フレーム抽出に失敗しました"}
 
-                # 統計情報の更新
-                self.processing_stats["frame_extraction"] = {
+            return {
+                "success": True,
+                "extracted_frames": final_extracted,
+                "video_info": {
                     "total_frames": frame_count,
-                    "extracted_frames": final_extracted,  # ← 確実な値
-                    "video_fps": fps,
-                    "video_duration": duration,
+                    "fps": fps,
+                    "duration": duration,
                     "resolution": [width, height],
                     "extraction_interval": interval
                 }
-
-                self.logger.info(f"✅ フレーム抽出完了: {final_extracted}フレーム")
-
-                if final_extracted == 0:
-                    self.logger.error("❌ フレーム抽出に失敗しました")
-                    return {"success": False, "error": "フレーム抽出に失敗しました"}
-
-                # 🔧 確実にextracted_framesを返す
-                return {
-                    "success": True, 
-                    "extracted_frames": final_extracted,  # ← 重要：この値が0になってはいけない
-                    "video_info": self.processing_stats["frame_extraction"]
-                }
-
-            except Exception as e:
-                self.logger.error(f"❌ フレーム抽出エラー: {e}")
-                return {"success": False, "error": str(e)}
+            }
         
-        def run_detection_tracking(self, frame_dir, video_name):
-            """基本検出・追跡処理（安定化版）"""
+        def run_detection_tracking(self, frame_dir, video_name, output_dir=None):
+            """基本検出・追跡処理（タイムスタンプ付きディレクトリ対応・機能維持版）"""
             try:
                 self.logger.info(f"👁️ 基本検出・追跡処理開始: {video_name}")
                 frame_files = sorted(list(Path(frame_dir).glob("*.jpg")))
-        
+
                 if not frame_files:
                     raise VideoProcessingError(f"フレームファイルが見つかりません: {frame_dir}")
-        
+
                 self.logger.info(f"📸 処理対象フレーム: {len(frame_files)}個")
-        
+
                 # モデルの事前ロード確認
                 if not hasattr(self, 'detection_model') and not hasattr(self, 'pose_model'):
                     self.load_models()
-        
+
                 detection_count = 0
                 frame_stats = []
-        
+
                 # 信頼度しきい値（より低く設定して検出率向上）
                 conf_threshold = 0.25
-        
+
                 # 🔧 簡略化された処理ループ
                 for i, frame_file in enumerate(frame_files):
                     try:
@@ -725,9 +696,9 @@ if not VIDEO_PROCESSOR_AVAILABLE:
                         if frame is None:
                             self.logger.warning(f"⚠️ フレーム読み込み失敗: {frame_file}")
                             continue
-                
+
                         frame_detections = 0
-                
+
                         # 🔧 ポーズモデル優先（より確実）
                         if hasattr(self, 'pose_model') and self.pose_model:
                             try:
@@ -737,7 +708,7 @@ if not VIDEO_PROCESSOR_AVAILABLE:
                                     detection_count += frame_detections
                             except Exception as e:
                                 self.logger.debug(f"フレーム{i}ポーズ検出エラー: {e}")
-                
+
                         # フレーム統計記録（簡略化）
                         frame_stats.append({
                             "frame_id": i,
@@ -747,16 +718,20 @@ if not VIDEO_PROCESSOR_AVAILABLE:
                             "track_id": i,  # 簡易ID
                             "timestamp": datetime.now().isoformat()
                         })
-                
+
                     except Exception as e:
                         self.logger.warning(f"フレーム{i}処理エラー（続行）: {e}")
                         continue
-        
-                # 結果CSV作成
-                output_dir = Path("outputs/temp") / video_name
-                output_dir.mkdir(parents=True, exist_ok=True)
+
+                # --- タイムスタンプ付きディレクトリ対応 ---
+                if output_dir is None:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    output_dir = Path("outputs/temp") / f"{video_name}_{timestamp}"
+                else:
+                    output_dir = Path(output_dir)
+                    output_dir.mkdir(parents=True, exist_ok=True)
                 csv_path = output_dir / f"{video_name}_results.csv"
-        
+
                 if frame_stats:
                     df = pd.DataFrame(frame_stats)
                     df.to_csv(csv_path, index=False)
@@ -766,7 +741,7 @@ if not VIDEO_PROCESSOR_AVAILABLE:
                     empty_df = pd.DataFrame(columns=["frame_id", "frame_file", "detections", "conf", "track_id", "timestamp"])
                     empty_df.to_csv(csv_path, index=False)
                     self.logger.warning("⚠️ 検出結果なし - 空のCSVを作成")
-        
+
                 # 統計情報
                 self.processing_stats = {
                     "detection_tracking": {
@@ -776,9 +751,9 @@ if not VIDEO_PROCESSOR_AVAILABLE:
                         "success_rate": len(frame_stats) / len(frame_files) if frame_files else 0
                     }
                 }
-        
+
                 self.logger.info(f"✅ 基本検出・追跡完了: {detection_count}個検出 / {len(frame_stats)}フレーム処理")
-        
+
                 return {
                     "success": True,
                     "data": {
@@ -789,7 +764,7 @@ if not VIDEO_PROCESSOR_AVAILABLE:
                         "processing_stats": self.processing_stats["detection_tracking"]
                     }
                 }
-        
+
             except Exception as e:
                 self.logger.error(f"❌ 基本検出・追跡エラー: {e}")
                 return {"success": False, "error": str(e)}
@@ -879,15 +854,23 @@ if not METRICS_ANALYZER_AVAILABLE:
                 self.logger.error(f"❌ 改善分析エラー: {e}")
                 return {"basic_analysis": f"エラー: {e}", "error": True}
         
-        # Line 845付近の create_visualizations メソッドを完全置換:
-
-        # Line 874付近のcreate_visualizationsメソッドを以下で完全置換:
-
         def create_visualizations(self, detection_results, vis_dir):
-            """基本可視化（完全版・確実な戻り値付き）"""
+            """
+            可視化生成（タイムスタンプ付きディレクトリ対応・既存機能完全維持版）
+            detection_results: run_detection_tracking等の出力(dict)
+            vis_dir: 可視化画像の保存先ディレクトリ（タイムスタンプ付き）
+            """
+            import json
+            import pandas as pd
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            from pathlib import Path
+            from datetime import datetime
+
             self.logger.info(f"📈 基本可視化生成: {vis_dir}")
-    
-            # 🔧 必ず戻り値を返すようにする（初期化）
+
+            # 初期化
             result = {
                 "success": False,
                 "error": "初期化エラー",
@@ -895,37 +878,30 @@ if not METRICS_ANALYZER_AVAILABLE:
                 "graphs_generated": 0,
                 "total_files": 0
             }
-    
+
             try:
-                from pathlib import Path
-                import json
-                from datetime import datetime
-        
-                # ディレクトリ作成
                 vis_path = Path(str(vis_dir))
                 vis_path.mkdir(parents=True, exist_ok=True)
                 self.logger.info(f"📁 可視化ディレクトリ作成: {vis_path}")
-        
+
                 # detection_results の詳細ログ
                 self.logger.info(f"🔧 detection_results type: {type(detection_results)}")
                 self.logger.info(f"🔧 detection_results content: {detection_results}")
-        
+
                 # CSVパス抽出
                 csv_path = None
                 data = {}
-        
+
                 if isinstance(detection_results, dict):
                     if detection_results.get("success", False):
                         data = detection_results.get("data", {})
                         csv_path = data.get("csv_path")
-                
                         # ネスト構造対応
                         if not csv_path and "detection_result" in data:
                             nested_data = data["detection_result"].get("data", {})
                             csv_path = nested_data.get("csv_path")
-                    
                 self.logger.info(f"🔧 検出されたCSVパス: {csv_path}")
-        
+
                 # 基本統計ファイル作成（必ず作成）
                 stats_file = vis_path / "basic_stats.json"
                 basic_stats = {
@@ -938,12 +914,12 @@ if not METRICS_ANALYZER_AVAILABLE:
                     "csv_path": str(csv_path) if csv_path else None,
                     "success": detection_results.get("success", False) if isinstance(detection_results, dict) else False
                 }
-        
+
                 with open(stats_file, 'w', encoding='utf-8') as f:
                     json.dump(basic_stats, f, indent=2, ensure_ascii=False)
                 self.logger.info(f"✅ 基本統計保存: {stats_file}")
-        
-                # 戻り値更新（重要！）
+
+                # 戻り値更新
                 result.update({
                     "success": True,
                     "error": None,
@@ -951,29 +927,23 @@ if not METRICS_ANALYZER_AVAILABLE:
                     "total_files": 1,
                     "graphs_generated": 0
                 })
-        
-                # 統計グラフ生成（オプション）
+
                 graphs_generated = 0
-        
+                graph_files = []
+
                 try:
-                    # matplotlib/pandas のインポート
-                    import matplotlib
-                    matplotlib.use('Agg')
-                    import matplotlib.pyplot as plt
-                    import pandas as pd
-            
-                    # 簡易フォント設定
+                    # フォント設定
                     try:
                         plt.rcParams['font.family'] = ['Hiragino Sans', 'DejaVu Sans']
-                    except:
+                    except Exception:
                         plt.rcParams['font.family'] = 'DejaVu Sans'
-            
+
                     # CSV ファイルの処理
                     if csv_path and Path(csv_path).exists():
                         self.logger.info(f"📊 CSVファイル読み込み: {csv_path}")
                         df = pd.read_csv(csv_path)
                         self.logger.info(f"📊 データ読み込み: {len(df)}行, カラム: {list(df.columns)}")
-                
+
                         if not df.empty:
                             # 1. フレーム別検出数グラフ
                             if 'frame' in df.columns or 'frame_id' in df.columns:
@@ -988,15 +958,15 @@ if not METRICS_ANALYZER_AVAILABLE:
                                     plt.ylabel('Detection Count', fontsize=12)
                                     plt.grid(True, alpha=0.3)
                                     plt.tight_layout()
-                            
                                     timeline_path = vis_path / "detection_timeline.png"
                                     plt.savefig(timeline_path, dpi=300, bbox_inches='tight')
                                     plt.close()
                                     graphs_generated += 1
+                                    graph_files.append(str(timeline_path))
                                     self.logger.info(f"✅ 時系列グラフ生成: {timeline_path}")
                                 except Exception as e:
                                     self.logger.error(f"❌ 時系列グラフエラー: {e}")
-                    
+
                             # 2. 信頼度分布グラフ
                             if 'conf' in df.columns or 'confidence' in df.columns:
                                 try:
@@ -1005,22 +975,22 @@ if not METRICS_ANALYZER_AVAILABLE:
                                     conf_data = df[conf_col].dropna()
                                     plt.hist(conf_data, bins=30, alpha=0.7, color='green', edgecolor='black')
                                     plt.axvline(conf_data.mean(), color='red', linestyle='--', 
-                                        label=f'Average: {conf_data.mean():.3f}')
+                                                label=f'Average: {conf_data.mean():.3f}')
                                     plt.title('Confidence Distribution', fontsize=16, pad=20)
                                     plt.xlabel('Confidence', fontsize=12)
                                     plt.ylabel('Frequency', fontsize=12)
                                     plt.legend()
                                     plt.grid(True, alpha=0.3)
                                     plt.tight_layout()
-                            
                                     conf_path = vis_path / "confidence_distribution.png"
                                     plt.savefig(conf_path, dpi=300, bbox_inches='tight')
                                     plt.close()
                                     graphs_generated += 1
+                                    graph_files.append(str(conf_path))
                                     self.logger.info(f"✅ 信頼度分布グラフ生成: {conf_path}")
                                 except Exception as e:
                                     self.logger.error(f"❌ 信頼度分布グラフエラー: {e}")
-                    
+
                             # 3. クラス分布グラフ
                             if 'class_name' in df.columns:
                                 try:
@@ -1032,15 +1002,28 @@ if not METRICS_ANALYZER_AVAILABLE:
                                     plt.ylabel('Detection Count', fontsize=12)
                                     plt.xticks(rotation=45)
                                     plt.tight_layout()
-                            
                                     class_path = vis_path / "class_distribution.png"
                                     plt.savefig(class_path, dpi=300, bbox_inches='tight')
                                     plt.close()
                                     graphs_generated += 1
+                                    graph_files.append(str(class_path))
                                     self.logger.info(f"✅ クラス分布グラフ生成: {class_path}")
                                 except Exception as e:
                                     self.logger.error(f"❌ クラス分布グラフエラー: {e}")
-                
+
+                            # 4. 4点キーポイント可視化（もし4点CSVがあれば）
+                            if 'filtered_csv_path' in data and data['filtered_csv_path'] and Path(data['filtered_csv_path']).exists():
+                                try:
+                                    filtered_csv = data['filtered_csv_path']
+                                    self.logger.info(f"🎨 4点キーポイント可視化: {filtered_csv}")
+                                    vis_4pt_result = self.create_4point_visualization(filtered_csv, data.get('video_path', ''), vis_path)
+                                    if vis_4pt_result.get("success"):
+                                        graphs_generated += 1
+                                        graph_files.append(vis_4pt_result.get("output_dir"))
+                                        self.logger.info(f"✅ 4点キーポイント可視化生成: {vis_4pt_result.get('output_dir')}")
+                                except Exception as e:
+                                    self.logger.error(f"❌ 4点キーポイント可視化エラー: {e}")
+
                         else:
                             self.logger.warning("⚠️ CSVデータが空です")
                     else:
@@ -1050,24 +1033,23 @@ if not METRICS_ANALYZER_AVAILABLE:
                     self.logger.warning(f"⚠️ matplotlib/pandasインポートエラー: {e}")
                 except Exception as plot_error:
                     self.logger.error(f"❌ グラフ生成エラー: {plot_error}", exc_info=True)
-        
+
                 # 最終結果更新
                 total_files = 1 + graphs_generated
                 result.update({
                     "success": True,
                     "error": None,
                     "graphs_generated": graphs_generated,
-                    "total_files": total_files
+                    "total_files": total_files,
+                    "graph_files": graph_files
                 })
-        
+
                 self.logger.info(f"🎨 可視化生成完了: 基本統計1個 + グラフ{graphs_generated}個 = 合計{total_files}個")
-        
-                # 🔧 必ず辞書を返す（確実性のため）
+
                 return result
-        
+
             except Exception as e:
                 self.logger.error(f"❌ 可視化生成全体エラー: {e}", exc_info=True)
-                # 🔧 エラー時も辞書を返す
                 result.update({
                     "success": False,
                     "error": str(e),
@@ -1632,7 +1614,7 @@ class ImprovedYOLOAnalyzer:
             ctx.add_info("fallback_count", len(fallbacks))
 
     @handle_errors(error_category=ErrorCategory.VIDEO_PROCESSING)
-    def run_baseline_analysis(self, video_path: str) -> Dict[str, Any]:
+    def run_baseline_analysis(self, video_path: str, output_dir=None) -> Dict[str, Any]:
         """
         ベースライン分析実行（完全統合版）
 
@@ -1660,7 +1642,10 @@ class ImprovedYOLOAnalyzer:
                 ctx.add_info("depth_enabled", self.depth_enabled)
 
             # 出力ディレクトリ準備
-            output_dir = Path("outputs/baseline") / video_name
+            if output_dir is None:
+                output_dir = Path("outputs/baseline") / video_name
+            output_dir = Path(output_dir)
+            output_dir.mkdir(parents=True, exist_ok=True)
             frame_dir = output_dir / "frames"
             
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -2111,11 +2096,9 @@ class ImprovedYOLOAnalyzer:
                 vis_dir.mkdir(exist_ok=True)
 
                 try:
-                    # 修正: detection_result["data"] を渡す
-                    vis_result = self.analyzer.create_visualizations(
-                        detection_result.get("data", {}), vis_dir
-                    )
-
+                    # 🔧 戻り値を受け取って詳細ログ出力
+                    vis_result = self.analyzer.create_visualizations(detection_result, vis_dir)
+    
                     # 🔧 None チェックを追加
                     if vis_result is None:
                         self.logger.warning("⚠️ Step 4警告: 可視化メソッドがNoneを返しました")
@@ -2123,7 +2106,7 @@ class ImprovedYOLOAnalyzer:
                     elif not isinstance(vis_result, dict):
                         self.logger.warning(f"⚠️ Step 4警告: 予期しない戻り値型: {type(vis_result)}")
                         vis_result = {"success": False, "error": f"予期しない戻り値型: {type(vis_result)}"}
-
+    
                     # 🔧 安全な成功判定
                     if vis_result.get("success", False):
                         total_files = vis_result.get("total_files", 0)
@@ -2133,7 +2116,7 @@ class ImprovedYOLOAnalyzer:
                         error_msg = vis_result.get("error", "不明なエラー")
                         self.logger.warning(f"⚠️ Step 4警告: 可視化生成エラー（処理継続）: {error_msg}")
                         self.error_collector.append(f"可視化生成エラー: {error_msg}")
-
+        
                 except Exception as e:
                     self.logger.warning(f"⚠️ Step 4警告: 可視化生成エラー（処理継続）: {e}")
                     self.logger.error(f"🔧 Step 4詳細エラー: {e}", exc_info=True)
@@ -3151,9 +3134,11 @@ class ImprovedYOLOAnalyzer:
 
 def main():
     """
-    メイン実行関数（4点キーポイント対応完全修正版・サマリー＆エラー処理強化）
+    メイン実行関数（タイムスタンプ付きディレクトリで毎回結果を保存し、過去の結果を残す仕様）
+    既存の処理・設定・ログ・サマリー出力などはそのまま維持しつつ、全成果物を
+    outputs/baseline/動画名_タイムスタンプ/
+    に保存するように修正
     """
-    # アスキーアートとバージョン情報
     print("""
     ╔══════════════════════════════════════════════════════════════════════╗
     ║                     🎯 YOLO11 姿勢分析システム v2.1                    ║
@@ -3161,7 +3146,6 @@ def main():
     ╚══════════════════════════════════════════════════════════════════════╝
     """)
 
-    # コマンドライン引数パーサーの設定
     parser = argparse.ArgumentParser(
         description="🎯 YOLO11姿勢分析システム - 動画から人物の姿勢を分析します",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -3223,12 +3207,13 @@ def main():
         video_path = Path(args.video_path)
         logger.info(f"🎬 動画ファイル: {video_path}")
 
+        # タイムスタンプ付きディレクトリ名を生成（outputs/baseline/動画名_タイムスタンプ）
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        video_name = video_path.stem
         if args.output_dir:
             output_dir = Path(args.output_dir)
         else:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            video_name = video_path.stem
-            output_dir = Path("results") / f"{video_name}_{timestamp}"
+            output_dir = Path("outputs/baseline") / f"{video_name}_{timestamp}"
 
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"📁 出力ディレクトリ: {output_dir}")
@@ -3309,8 +3294,9 @@ def main():
         start_time = time.time()
 
         try:
-            # ベースライン分析実行
-            result = analyzer.run_baseline_analysis(str(video_path))
+            # ベースライン分析実行（タイムスタンプ付きoutput_dirを渡す）
+            # ImprovedYOLOAnalyzerのrun_baseline_analysisをoutput_dir対応にする必要あり
+            result = analyzer.run_baseline_analysis(str(video_path), output_dir=output_dir)
             if not result.get("success", False):
                 error_msg = result.get("error", "不明なエラー")
                 logger.error(f"❌ 分析処理失敗: {error_msg}")
@@ -3357,6 +3343,13 @@ def main():
             # パフォーマンス統計
             fps = total_frames / processing_time if processing_time > 0 else 0
             logger.info(f"⚡ 処理性能: {fps:.2f} FPS")
+
+            # サマリーJSONもタイムスタンプ付きoutput_dirに保存
+            summary_file = output_dir / f"{video_name}_{timestamp}_summary.json"
+            import json
+            with open(summary_file, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2, ensure_ascii=False)
+            logger.info(f"📄 サマリー保存: {summary_file}")
 
             logger.info("🎯 ========== 処理完了 ==========")
             if args.use_4points:
