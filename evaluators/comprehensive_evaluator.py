@@ -69,11 +69,19 @@ class ComprehensiveEvaluator:
                 metrics["integrated_score"] = self._calculate_integrated_score(metrics)
 
                 ctx.add_info("metrics_calculated", list(metrics.keys()))
-                return metrics
+                return {
+                    "success": True,
+                    "metrics": metrics
+                }
 
             except Exception as e:
                 logger.error(f"評価エラー: {e}", exc_info=True)
-                return {"error": str(e)}
+                import traceback
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "traceback": traceback.format_exc()
+                }
 
     @handle_errors(logger=logger, error_category=ErrorCategory.EVALUATION)
     def _calculate_basic_metrics(self, detection_results):
