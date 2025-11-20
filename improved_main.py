@@ -2275,132 +2275,142 @@ class ImprovedYOLOAnalyzer:
         }
 
     def _add_6point_metrics(self, df):
-        """6点キーポイント専用メトリクス計算"""
-        try:
-            self.logger.info("📊 6点メトリクス計算開始")
+        """
+        6点キーポイント専用メトリクス計算（shoulder_head_angle追加・省略なし完全版）
+        """
+        import numpy as np
 
-            metrics_df = df.copy()
+        self.logger.info("📊 6点メトリクス計算開始")
 
-            # 🎯 基本メトリクス初期化
-            metrics_df['shoulder_width'] = 0.0
-            metrics_df['head_center_x'] = 0.0
-            metrics_df['head_center_y'] = 0.0
-            metrics_df['shoulder_mid_x'] = 0.0
-            metrics_df['shoulder_mid_y'] = 0.0
-            metrics_df['pose_angle'] = 0.0
-            metrics_df['keypoint_completeness'] = 0.0
-            metrics_df['pose_confidence'] = 0.0
+        metrics_df = df.copy()
 
-            calculated_count = 0
-            shoulder_width_count = 0
-            head_position_count = 0
-            pose_angle_count = 0
+        # メトリクス初期化
+        metrics_df['shoulder_width'] = 0.0
+        metrics_df['head_center_x'] = 0.0
+        metrics_df['head_center_y'] = 0.0
+        metrics_df['shoulder_mid_x'] = 0.0
+        metrics_df['shoulder_mid_y'] = 0.0
+        metrics_df['pose_angle'] = 0.0
+        metrics_df['keypoint_completeness'] = 0.0
+        metrics_df['pose_confidence'] = 0.0
+        metrics_df['shoulder_head_angle'] = 0.0  # ★なす角
 
-            for idx, row in metrics_df.iterrows():
-                try:
-                    # 🎯 肩幅計算
-                    if ('left_shoulder_x' in row and 'right_shoulder_x' in row and
-                        'left_shoulder_y' in row and 'right_shoulder_y' in row):
-                        left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
-                        right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
-                        if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
-                            shoulder_width = np.sqrt((right_x - left_x) ** 2 + (right_y - left_y) ** 2)
-                            metrics_df.at[idx, 'shoulder_width'] = shoulder_width
-                            shoulder_width_count += 1
+        calculated_count = 0
+        shoulder_width_count = 0
+        head_position_count = 0
+        pose_angle_count = 0
+        angle_count = 0
 
-                    # 🎯 head_center計算
-                    if ('left_ear_x' in row and 'right_ear_x' in row and
-                        'left_ear_y' in row and 'right_ear_y' in row):
-                        left_ear_x, left_ear_y = float(row['left_ear_x']), float(row['left_ear_y'])
-                        right_ear_x, right_ear_y = float(row['right_ear_x']), float(row['right_ear_y'])
-                        if left_ear_x > 0 and left_ear_y > 0 and right_ear_x > 0 and right_ear_y > 0:
-                            head_center_x = (left_ear_x + right_ear_x) / 2
-                            head_center_y = (left_ear_y + right_ear_y) / 2
-                            metrics_df.at[idx, 'head_center_x'] = head_center_x
-                            metrics_df.at[idx, 'head_center_y'] = head_center_y
-                            head_position_count += 1
+        for idx, row in metrics_df.iterrows():
+            try:
+                # 肩幅
+                if ('left_shoulder_x' in row and 'right_shoulder_x' in row and
+                    'left_shoulder_y' in row and 'right_shoulder_y' in row):
+                    left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
+                    right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
+                    if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
+                        shoulder_width = np.sqrt((right_x - left_x) ** 2 + (right_y - left_y) ** 2)
+                        metrics_df.at[idx, 'shoulder_width'] = shoulder_width
+                        shoulder_width_count += 1
 
-                    # 🎯 両肩の中点計算
-                    if ('left_shoulder_x' in row and 'right_shoulder_x' in row and
-                        'left_shoulder_y' in row and 'right_shoulder_y' in row):
-                        left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
-                        right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
-                        if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
-                            shoulder_mid_x = (left_x + right_x) / 2
-                            shoulder_mid_y = (left_y + right_y) / 2
-                            metrics_df.at[idx, 'shoulder_mid_x'] = shoulder_mid_x
-                            metrics_df.at[idx, 'shoulder_mid_y'] = shoulder_mid_y
+                # head_center
+                if ('left_ear_x' in row and 'right_ear_x' in row and
+                    'left_ear_y' in row and 'right_ear_y' in row):
+                    left_ear_x, left_ear_y = float(row['left_ear_x']), float(row['left_ear_y'])
+                    right_ear_x, right_ear_y = float(row['right_ear_x']), float(row['right_ear_y'])
+                    if left_ear_x > 0 and left_ear_y > 0 and right_ear_x > 0 and right_ear_y > 0:
+                        head_center_x = (left_ear_x + right_ear_x) / 2
+                        head_center_y = (left_ear_y + right_ear_y) / 2
+                        metrics_df.at[idx, 'head_center_x'] = head_center_x
+                        metrics_df.at[idx, 'head_center_y'] = head_center_y
+                        head_position_count += 1
 
-                    # 🎯 姿勢角度計算（肩のライン）
-                    if (metrics_df.at[idx, 'shoulder_width'] > 0 and
-                        'left_shoulder_x' in row and 'right_shoulder_x' in row and
-                        'left_shoulder_y' in row and 'right_shoulder_y' in row):
-                        left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
-                        right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
-                        if left_x > 0 and right_x > 0:
-                            angle_rad = np.arctan2(right_y - left_y, right_x - left_x)
-                            angle_deg = np.degrees(angle_rad)
-                            metrics_df.at[idx, 'pose_angle'] = angle_deg
-                            pose_angle_count += 1
+                # 両肩の中点
+                if ('left_shoulder_x' in row and 'right_shoulder_x' in row and
+                    'left_shoulder_y' in row and 'right_shoulder_y' in row):
+                    left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
+                    right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
+                    if left_x > 0 and left_y > 0 and right_x > 0 and right_y > 0:
+                        shoulder_mid_x = (left_x + right_x) / 2
+                        shoulder_mid_y = (left_y + right_y) / 2
+                        metrics_df.at[idx, 'shoulder_mid_x'] = shoulder_mid_x
+                        metrics_df.at[idx, 'shoulder_mid_y'] = shoulder_mid_y
 
-                    # 🎯 キーポイント完全性スコア（6点）
-                    available_keypoints = [
-                        'left_ear', 'right_ear', 'left_shoulder', 'right_shoulder',
-                        'head_center', 'shoulder_mid'
-                    ]
-                    valid_keypoints = 0
-                    total_keypoints = len(available_keypoints)
+                # 姿勢角度（肩ライン）
+                if (metrics_df.at[idx, 'shoulder_width'] > 0 and
+                    'left_shoulder_x' in row and 'right_shoulder_x' in row and
+                    'left_shoulder_y' in row and 'right_shoulder_y' in row):
+                    left_x, left_y = float(row['left_shoulder_x']), float(row['left_shoulder_y'])
+                    right_x, right_y = float(row['right_shoulder_x']), float(row['right_shoulder_y'])
+                    if left_x > 0 and right_x > 0:
+                        angle_rad = np.arctan2(right_y - left_y, right_x - left_x)
+                        angle_deg = np.degrees(angle_rad)
+                        metrics_df.at[idx, 'pose_angle'] = angle_deg
+                        pose_angle_count += 1
 
-                    # 4点＋head_center＋shoulder_mid
-                    for kpt in ['left_ear', 'right_ear', 'left_shoulder', 'right_shoulder']:
-                        x_col, y_col = f"{kpt}_x", f"{kpt}_y"
-                        if (x_col in row and y_col in row):
-                                if float(row[x_col]) > 0 and float(row[y_col]) > 0:
-                                    valid_keypoints += 1
-                    # head_center
-                    if ('head_center_x' in row and 'head_center_y' in row):
-                        if float(row['head_center_x']) > 0 and float(row['head_center_y']) > 0:
+                # ★肩の中点とhead_centerのなす角
+                sx, sy = metrics_df.at[idx, 'shoulder_mid_x'], metrics_df.at[idx, 'shoulder_mid_y']
+                hx, hy = metrics_df.at[idx, 'head_center_x'], metrics_df.at[idx, 'head_center_y']
+                if sx > 0 and sy > 0 and hx > 0 and hy > 0:
+                    dx = hx - sx
+                    dy = sy - hy  # y軸反転考慮
+                    theta = np.degrees(np.arctan2(dy, dx))  # 水平右向き0度、上向き正
+                    metrics_df.at[idx, 'shoulder_head_angle'] = theta
+                    angle_count += 1
+
+                # キーポイント完全性スコア
+                available_keypoints = [
+                    'left_ear', 'right_ear', 'left_shoulder', 'right_shoulder',
+                    'head_center', 'shoulder_mid'
+                ]
+                valid_keypoints = 0
+                total_keypoints = len(available_keypoints)
+                for kpt in ['left_ear', 'right_ear', 'left_shoulder', 'right_shoulder']:
+                    x_col, y_col = f"{kpt}_x", f"{kpt}_y"
+                    if (x_col in row and y_col in row):
+                        if float(row[x_col]) > 0 and float(row[y_col]) > 0:
                             valid_keypoints += 1
-                    # shoulder_mid
-                    if ('shoulder_mid_x' in row and 'shoulder_mid_y' in row):
-                        if float(row['shoulder_mid_x']) > 0 and float(row['shoulder_mid_y']) > 0:
-                            valid_keypoints += 1
+                if ('head_center_x' in row and 'head_center_y' in row):
+                    if float(row['head_center_x']) > 0 and float(row['head_center_y']) > 0:
+                        valid_keypoints += 1
+                if ('shoulder_mid_x' in row and 'shoulder_mid_y' in row):
+                    if float(row['shoulder_mid_x']) > 0 and float(row['shoulder_mid_y']) > 0:
+                        valid_keypoints += 1
 
-                    completeness = valid_keypoints / total_keypoints
-                    metrics_df.at[idx, 'keypoint_completeness'] = completeness
+                completeness = valid_keypoints / total_keypoints
+                metrics_df.at[idx, 'keypoint_completeness'] = completeness
 
-                    # 🎯 ポーズ信頼度（基本検出信頼度 × キーポイント完全性）
-                    pose_confidence = float(row['conf']) * completeness if 'conf' in row else completeness
-                    metrics_df.at[idx, 'pose_confidence'] = pose_confidence
+                # ポーズ信頼度
+                pose_confidence = float(row['conf']) * completeness if 'conf' in row else completeness
+                metrics_df.at[idx, 'pose_confidence'] = pose_confidence
 
-                    calculated_count += 1
+                calculated_count += 1
+    
+            except Exception as row_error:
+                self.logger.debug(f"行 {idx} の6点メトリクス計算エラー: {row_error}")
+                continue
 
-                except Exception as row_error:
-                    self.logger.debug(f"行 {idx} の6点メトリクス計算エラー: {row_error}")
-                    continue
+        # 統計ログ
+        total_rows = len(metrics_df)
+        self.logger.info(f"📊 6点メトリクス計算完了:")
+        self.logger.info(f"  処理行数: {calculated_count}/{total_rows}")
+        self.logger.info(f"  肩幅計算: {shoulder_width_count}行")
+        self.logger.info(f"  頭部位置: {head_position_count}行")
+        self.logger.info(f"  姿勢角度: {pose_angle_count}行")
+        self.logger.info(f"  なす角計算: {angle_count}行")
 
-            # 計算結果統計
-            total_rows = len(metrics_df)
-            self.logger.info(f"📊 6点メトリクス計算完了:")
-            self.logger.info(f"  処理行数: {calculated_count}/{total_rows}")
-            self.logger.info(f"  肩幅計算: {shoulder_width_count}行")
-            self.logger.info(f"  頭部位置: {head_position_count}行")
-            self.logger.info(f"  姿勢角度: {pose_angle_count}行")
+        if calculated_count > 0:
+            avg_shoulder_width = metrics_df[metrics_df['shoulder_width'] > 0]['shoulder_width'].mean()
+            avg_completeness = metrics_df['keypoint_completeness'].mean()
+            avg_pose_conf = metrics_df['pose_confidence'].mean()
+            avg_angle = metrics_df['shoulder_head_angle'].mean()
+            self.logger.info(f"📊 メトリクス統計:")
+            self.logger.info(f"  平均肩幅: {avg_shoulder_width:.1f}px")
+            self.logger.info(f"  平均完全性: {avg_completeness:.2f}")
+            self.logger.info(f"  平均ポーズ信頼度: {avg_pose_conf:.2f}")
+            self.logger.info(f"  平均なす角: {avg_angle:.2f}度")
 
-            if calculated_count > 0:
-                avg_shoulder_width = metrics_df[metrics_df['shoulder_width'] > 0]['shoulder_width'].mean()
-                avg_completeness = metrics_df['keypoint_completeness'].mean()
-                avg_pose_conf = metrics_df['pose_confidence'].mean()
-                self.logger.info(f"📊 メトリクス統計:")
-                self.logger.info(f"  平均肩幅: {avg_shoulder_width:.1f}px")
-                self.logger.info(f"  平均完全性: {avg_completeness:.2f}")
-                self.logger.info(f"  平均ポーズ信頼度: {avg_pose_conf:.2f}")
-
-            return metrics_df
-
-        except Exception as e:
-            self.logger.error(f"❌ 6点メトリクス計算エラー: {e}")
-            return df
+        return metrics_df
 
     def create_6point_visualization(self, output_dir, keypoints_df, frame_dir, log_path=None):
         """
@@ -2445,16 +2455,16 @@ class ImprovedYOLOAnalyzer:
     
     def draw_6point_keypoints(self, frame, keypoints, row, log_path=None):
         """
-        両肩・両耳・head_center・両肩の中点を描画し、座標をログ保存
+        6点キーポイント（両肩・両耳・head_center・両肩の中点）をシンプルな色で描画し、
+        検出枠とIDも画像上に表示する
         """
         import cv2
         import json
 
-        # 色設定
-        ear_color = (0, 255, 255)
-        shoulder_color = (255, 128, 0)
-        center_color = (0, 0, 255)
-        midpoint_color = (0, 255, 0)
+        # シンプルな色設定
+        kpt_color = (255, 0, 0)      # 青（全キーポイント共通）
+        bbox_color = (0, 255, 0)     # 緑（検出枠）
+        id_color = (0, 0, 255)       # 赤（ID）
 
         # 両耳・両肩の座標取得
         left_ear = keypoints.get('left_ear', None)
@@ -2477,22 +2487,37 @@ class ImprovedYOLOAnalyzer:
                 int((left_shoulder[1] + right_shoulder[1]) / 2)
             )
 
-        # 4点＋head_center＋両肩中点を描画
+        # 4点＋head_center＋両肩中点を描画（全て同じ色・シンプル）
         for kpt_name, (x, y, conf) in keypoints.items():
-            if 'ear' in kpt_name:
-                color = ear_color
-            elif 'shoulder' in kpt_name:
-                color = shoulder_color
-            else:
-                color = (128, 128, 128)
-            cv2.circle(frame, (int(x), int(y)), 6, color, -1)
+            if x > 0 and y > 0:
+                cv2.circle(frame, (int(x), int(y)), 6, kpt_color, -1)
 
         if head_center:
-            cv2.circle(frame, head_center, 8, center_color, -1)
+            cv2.circle(frame, head_center, 8, kpt_color, -1)
         if shoulder_midpoint:
-            cv2.circle(frame, shoulder_midpoint, 8, midpoint_color, -1)
+            cv2.circle(frame, shoulder_midpoint, 8, kpt_color, -1)
 
-        # ログ保存
+        # 検出枠描画
+        if all(k in row for k in ["x1", "y1", "x2", "y2"]):
+            try:
+                x1, y1, x2, y2 = int(row["x1"]), int(row["y1"]), int(row["x2"]), int(row["y2"])
+                cv2.rectangle(frame, (x1, y1), (x2, y2), bbox_color, 2)
+            except Exception:
+                pass
+
+        # ID表示
+        if "person_id" in row and row["person_id"] is not None:
+            pid = str(row["person_id"])
+            # 枠の左上 or キーポイントの近くに表示
+            if all(k in row for k in ["x1", "y1"]):
+                pos = (int(row["x1"]), max(0, int(row["y1"]) - 10))
+            elif left_shoulder:
+                pos = (int(left_shoulder[0]), int(left_shoulder[1]) - 10)
+            else:
+                pos = (10, 30)
+            cv2.putText(frame, f"ID:{pid}", pos, cv2.FONT_HERSHEY_SIMPLEX, 0.8, id_color, 2)
+
+        # ログ保存（必要なら）
         log_data = {
             "frame": row.get("frame"),
             "person_id": row.get("person_id"),
