@@ -13,6 +13,7 @@ import torch
 import psutil
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
+from utils.camera_calibration import undistort_with_json
 
 # 🔧 統一エラーハンドラーからインポート
 from utils.error_handler import (
@@ -316,19 +317,20 @@ def analyze_frames_with_tracking_memory_efficient(
     model_verification: Optional[Dict[str, Any]] = None,
     force_exact_model: bool = True
 ) -> Dict[str, Any]:
-    """メモリ効率的なフレーム解析（完全修正版）"""
+    """メモリ効率的なフレーム解析（歪み補正一貫適用版）"""
+    from utils.camera_calibration import undistort_with_json
+
     with ErrorContext("XLargeモデル確実使用フレーム解析処理", logger=logger, raise_on_error=True) as ctx:
-        # 🎯 モデルパス最終決定ログ
+        # モデルパス・設定初期化（既存コード）
         logger.info("🎯 ========== モデル使用開始 ==========")
         logger.info(f"📝 要求モデルパス: {model_path}")
         logger.info(f"🔧 厳密モード: {'有効' if force_exact_model else '無効'}")
         logger.info("🎯 ====================================")
-        
-        # 🔧 修正: デフォルト設定の完全性確保
+
         if config is None:
             config = {
                 "confidence_threshold": 0.3,
-                "tracking_config": "bytetrack.yaml",  # 🔧 確実に設定
+                "tracking_config": "bytetrack.yaml",
                 "save_visualizations": True,
                 "save_detection_frames": True,
                 "batch_size": 16,
@@ -336,35 +338,28 @@ def analyze_frames_with_tracking_memory_efficient(
                 "streaming_output": True,
                 "device": "auto",
                 "class_names": {0: "person"},
-                "force_pose_task": True,  # 🔧 ポーズタスク強制
-                "keypoint_processing_enabled": True  # 🔧 キーポイント処理確実有効
+                "force_pose_task": True,
+                "keypoint_processing_enabled": True
             }
         else:
             config = config.copy()
-            # 🔧 修正: 必須設定の確実な適用
             config.setdefault("tracking_config", "bytetrack.yaml")
             config.setdefault("save_visualizations", True)
             config.setdefault("save_detection_frames", True)
             config.setdefault("class_names", {0: "person"})
             config.setdefault("force_pose_task", True)
             config.setdefault("keypoint_processing_enabled", True)
-            
-            # 🔧 XLargeモデル専用設定
             if "11x" in model_path:
                 config.setdefault("batch_size", 16)
                 config.setdefault("max_memory_gb", 6.0)
-        
-        # 🔧 追加: tracker設定の最終検証
+
         if not config.get("tracking_config") or config.get("tracking_config") == "":
             config["tracking_config"] = "bytetrack.yaml"
             logger.info("🔧 tracker設定をデフォルトに修正")
 
         os.makedirs(result_dir, exist_ok=True)
-        
-        # 可視化専用ディレクトリ作成
         vis_dir = os.path.join(result_dir, "visualized_frames")
         os.makedirs(vis_dir, exist_ok=True)
-        
         processor = MemoryEfficientProcessor(config)
 
         ctx.add_info("result_dir", result_dir)
@@ -383,7 +378,6 @@ def analyze_frames_with_tracking_memory_efficient(
                 logger.info("🔄 新規モデルロード")
                 model, verification_info = load_model_with_verification(model_path, force_exact_model)
 
-            # 最終的な使用モデル確認ログ
             logger.info("🎯 ========== 最終使用モデル確認 ==========")
             if verification_info.get("verification_passed"):
                 logger.info(f"✅ 要求通りのモデルで処理実行")
@@ -394,13 +388,10 @@ def analyze_frames_with_tracking_memory_efficient(
                 logger.error(f"❌ フォールバックモデルで処理実行")
                 logger.error(f"   要求タイプ: {verification_info.get('requested_type', 'UNKNOWN')}")
                 logger.error(f"   実際タイプ: {verification_info.get('estimated_type', 'UNKNOWN')}")
-                
                 if verification_info.get("emergency_fallback"):
                     logger.error("🚨 緊急フォールバックが発生しました!")
                     logger.error(f"   元要求: {verification_info.get('original_requested', '不明')}")
-            
             logger.info("🎯 ==========================================")
-            
             ctx.add_info("model_verification", verification_info)
 
             # フレームディレクトリ検証
@@ -416,7 +407,6 @@ def analyze_frames_with_tracking_memory_efficient(
                 f for f in os.listdir(frame_dir)
                 if f.lower().endswith(('.jpg', '.jpeg', '.png'))
             ])
-
             total_frames = len(frame_files)
             ctx.add_info("total_frames", total_frames)
 
@@ -425,24 +415,18 @@ def analyze_frames_with_tracking_memory_efficient(
             logger.info(f"📁 可視化ディレクトリ: {vis_dir}")
             logger.info(f"🎯 使用モデル: {verification_info.get('estimated_type', 'UNKNOWN')}")
 
-            # 🎯 CSV準備（キーポイント列を含むヘッダー）
+            # CSV準備
             csv_path = os.path.join(result_dir, "detections_streaming.csv")
-
-            # キーポイント列名生成
             base_headers = ["frame", "person_id", "x1", "y1", "x2", "y2", "conf", "class_name"]
             coco_names = ['nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
-                         'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
-                         'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
-                         'left_knee', 'right_knee', 'left_ankle', 'right_ankle']
-            
+                          'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+                          'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
+                          'left_knee', 'right_knee', 'left_ankle', 'right_ankle']
             keypoint_headers = []
             for name in coco_names:
                 keypoint_headers.extend([f'{name}_x', f'{name}_y', f'{name}_conf'])
-            
-            # 完全なヘッダー（基本8列 + キーポイント51列 = 59列）
             full_headers = base_headers + keypoint_headers
 
-            # 統計初期化
             stats = {
                 "total_frames": total_frames,
                 "processed_frames": 0,
@@ -466,20 +450,14 @@ def analyze_frames_with_tracking_memory_efficient(
             }
 
             batch_size = config.get("batch_size", 16)
-            
-            # XLargeモデル使用時の警告表示
             if verification_info.get('estimated_type') == 'XLARGE':
                 logger.info("🚀 XLARGEモデルでの高精度処理を開始します")
                 logger.info(f"   予想処理時間: 通常の2-3倍")
                 logger.info(f"   予想メモリ使用量: 4-8GB")
 
-            # バッチ処理開始
             with open(csv_path, 'w', newline='', encoding='utf-8') as csv_file:
                 csv_writer = csv.writer(csv_file)
-                
-                # 🎯 キーポイント対応ヘッダーを書き込み
                 csv_writer.writerow(full_headers)
-                
                 logger.info(f"📋 CSV出力準備完了:")
                 logger.info(f"   基本列: {len(base_headers)}個")
                 logger.info(f"   キーポイント列: {len(keypoint_headers)}個")
@@ -489,98 +467,85 @@ def analyze_frames_with_tracking_memory_efficient(
                     for batch_start in range(0, total_frames, batch_size):
                         batch_end = min(batch_start + batch_size, total_frames)
                         batch_files = frame_files[batch_start:batch_end]
-
                         batch_start_time = time.time()
                         batch_detections = []
 
                         logger.info(f"📦 バッチ処理 {batch_start//batch_size + 1}/{(total_frames-1)//batch_size + 1}: "
-                                f"{len(batch_files)}フレーム (モデル: {verification_info.get('estimated_type', 'UNKNOWN')})")
+                                    f"{len(batch_files)}フレーム (モデル: {verification_info.get('estimated_type', 'UNKNOWN')})")
 
                         for frame_file in batch_files:
                             frame_path = os.path.join(frame_dir, frame_file)
-
                             try:
-                                # メモリチェック
                                 if processor.check_memory_threshold():
                                     logger.warning("⚠️ メモリ使用量が閾値を超過。クリーンアップを実行...")
                                     processor.force_memory_cleanup()
 
-                                # 🔧 修正: tracker設定の確実な適用
                                 tracker_config = config.get("tracking_config")
                                 if not tracker_config or tracker_config == "":
                                     tracker_config = "bytetrack.yaml"
                                     logger.debug(f"🔧 tracker設定をデフォルトに修正: {tracker_config}")
-                                
-                                # 🎯 推論実行（ポーズタスクを確実に実行）
+
+                                # 🎯 歪み補正を推論前に適用
+                                frame = cv2.imread(frame_path)
+                                if frame is None:
+                                    logger.warning(f"⚠️ フレーム読み込み失敗: {frame_file}")
+                                    stats["visualization_stats"]["failed"] += 1
+                                    continue
+                                frame = undistort_with_json(frame, calib_path="configs/camera_params.json")
+
+                                # 🎯 推論実行（画像データを直接渡す）
                                 inference_params = {
-                                    "source": frame_path,
+                                    "source": frame,
                                     "persist": True,
                                     "tracker": tracker_config,
                                     "conf": config.get("confidence_threshold", 0.3),
-                                    "task": "pose",  # 🚨 確実なポーズタスク指定
+                                    "task": "pose",
                                     "verbose": False,
                                     "save": False,
                                     "show": False
                                 }
-
                                 if config.get("force_pose_task", True):
                                     inference_params["task"] = "pose"
 
                                 logger.info(f"🎯 推論パラメータ: tracker={tracker_config}, task=pose")
                                 results = model.track(**inference_params)
 
-                                # 🔧 結果処理（キーポイント含む）
                                 frame_detections = 0
                                 frame_has_keypoints = False
-                                
+
                                 for r in results:
                                     if r.boxes is not None:
                                         boxes = r.boxes.xyxy.cpu().numpy()
                                         confidences = r.boxes.conf.cpu().numpy()
-
-                                        # トラッキングIDの処理
                                         if r.boxes.id is not None:
                                             track_ids = r.boxes.id.cpu().numpy().astype(int)
                                         else:
                                             track_ids = list(range(len(boxes)))
-                                        
-                                        # 🎯 キーポイント処理（確実に実行・エラー処理強化）
                                         if r.keypoints is not None:
                                             try:
-                                                keypoints = r.keypoints.data.cpu().numpy()  # [N, 17, 3]
+                                                keypoints = r.keypoints.data.cpu().numpy()
                                                 frame_has_keypoints = True
-                                                
                                                 logger.debug(f"🦴 フレーム {frame_file}: キーポイント検出 {keypoints.shape}")
-                                                
-                                                # キーポイント付き検出データ作成
                                                 for i, (box, conf, kpts) in enumerate(zip(boxes, confidences, keypoints)):
                                                     if conf < config.get("confidence_threshold", 0.3):
                                                         continue
-                                                        
                                                     track_id = track_ids[i] if i < len(track_ids) else i
                                                     x1, y1, x2, y2 = box
-                                                    
-                                                    # 基本検出情報
                                                     detection_row = [
                                                         frame_file, int(track_id),
                                                         float(x1), float(y1), float(x2), float(y2),
                                                         float(conf), "person"
                                                     ]
-                                                    
-                                                    # 🎯 キーポイント情報を順番通りに追加
                                                     valid_keypoints = 0
                                                     for j, name in enumerate(coco_names):
                                                         if j < len(kpts):
                                                             kpt_x, kpt_y, kpt_conf = kpts[j]
-                                                            
-                                                            # NaN/Inf チェックと変換
                                                             if np.isnan(kpt_x) or np.isinf(kpt_x):
                                                                 kpt_x = 0.0
                                                             if np.isnan(kpt_y) or np.isinf(kpt_y):
                                                                 kpt_y = 0.0
                                                             if np.isnan(kpt_conf) or np.isinf(kpt_conf):
                                                                 kpt_conf = 0.0
-                                                            
                                                             detection_row.extend([
                                                                 float(kpt_x),
                                                                 float(kpt_y),
@@ -590,32 +555,24 @@ def analyze_frames_with_tracking_memory_efficient(
                                                                 valid_keypoints += 1
                                                         else:
                                                             detection_row.extend([0.0, 0.0, 0.0])
-                                                    
-                                                    # 🚨 重要: 列数検証
                                                     if len(detection_row) != len(full_headers):
                                                         logger.error(f"❌ 列数不一致: 期待{len(full_headers)}, 実際{len(detection_row)}")
                                                         logger.error(f"   フレーム: {frame_file}")
                                                         logger.error(f"   検出データ: {detection_row[:10]}...")
                                                         continue
-                                                    
                                                     batch_detections.append(detection_row)
                                                     frame_detections += 1
                                                     stats["unique_ids"].add(track_id)
-                                                    
-                                                    # キーポイント統計更新
                                                     stats["keypoint_stats"]["total_keypoints_detected"] += valid_keypoints
                                                     stats["keypoint_stats"]["keypoints_per_person"].append(valid_keypoints)
-                                                    
                                             except Exception as keypoint_error:
                                                 logger.error(f"❌ キーポイント処理エラー {frame_file}: {keypoint_error}")
                                                 frame_has_keypoints = False
                                         else:
-                                            # 🎯 キーポイントなしの場合（ゼロパディング・エラー処理強化）
                                             logger.warning(f"⚠️ フレーム {frame_file}: キーポイント未検出")
                                             for i, (box, conf) in enumerate(zip(boxes, confidences)):
                                                 if conf < config.get("confidence_threshold", 0.3):
                                                     continue
-                                                    
                                                 track_id = track_ids[i] if i < len(track_ids) else i
                                                 x1, y1, x2, y2 = box
                                                 detection_row = [
@@ -623,57 +580,40 @@ def analyze_frames_with_tracking_memory_efficient(
                                                     float(x1), float(y1), float(x2), float(y2),
                                                     float(conf), "person"
                                                 ]
-                                                
-                                                # キーポイント列をゼロで確実に埋める
                                                 for _ in range(len(keypoint_headers)):
                                                     detection_row.append(0.0)
-                                                
-                                                # 列数検証
                                                 if len(detection_row) != len(full_headers):
                                                     logger.error(f"❌ ゼロパディング列数不一致: 期待{len(full_headers)}, 実際{len(detection_row)}")
                                                     continue
-                                                
                                                 batch_detections.append(detection_row)
                                                 frame_detections += 1
                                                 stats["unique_ids"].add(track_id)
 
-                                # キーポイント統計更新
                                 if frame_has_keypoints:
                                     stats["keypoint_stats"]["frames_with_keypoints"] += 1
-
                                 stats["total_detections"] += frame_detections
                                 stats["successful_frames"] += 1
 
                                 # 🎨 検出枠付き画像生成
                                 if config.get("save_visualizations", True):
                                     try:
-                                        frame = cv2.imread(frame_path)
-                                        if frame is not None:
-                                            vis_filename = f"vis_{frame_file}"
-                                            vis_output_path = os.path.join(vis_dir, vis_filename)
-                                            
-                                            success = create_detection_visualization(
-                                                frame, results, vis_output_path, frame_file, config
-                                            )
-                                            
-                                            if success:
-                                                stats["visualization_stats"]["generated"] += 1
-                                                logger.debug(f"✅ 可視化生成: {vis_filename}")
-                                            else:
-                                                stats["visualization_stats"]["failed"] += 1
-                                                
-                                            del frame
+                                        # 補正済みframeをそのまま可視化に渡す
+                                        vis_filename = f"vis_{frame_file}"
+                                        vis_output_path = os.path.join(vis_dir, vis_filename)
+                                        success = create_detection_visualization(
+                                            frame, results, vis_output_path, frame_file, config
+                                        )
+                                        if success:
+                                            stats["visualization_stats"]["generated"] += 1
+                                            logger.debug(f"✅ 可視化生成: {vis_filename}")
                                         else:
-                                            logger.warning(f"⚠️ フレーム読み込み失敗: {frame_file}")
                                             stats["visualization_stats"]["failed"] += 1
-                                            
                                     except Exception as vis_error:
                                         logger.warning(f"❌ 可視化エラー {frame_file}: {vis_error}")
                                         stats["visualization_stats"]["failed"] += 1
                                 else:
                                     stats["visualization_stats"]["skipped"] += 1
 
-                                # 結果オブジェクトを解放
                                 del results
 
                             except Exception as frame_error:
@@ -683,54 +623,41 @@ def analyze_frames_with_tracking_memory_efficient(
 
                             stats["processed_frames"] += 1
 
-                        # 🎯 バッチの検出結果をCSVに書き込み（確実に実行）
                         if batch_detections:
                             try:
                                 csv_writer.writerows(batch_detections)
-                                csv_file.flush()  # 即座にディスクに書き込み
-                                
-                                # バッチ完了ログ
-                                batch_keypoint_count = sum(1 for row in batch_detections 
-                                                         if any(row[8+i] != 0.0 for i in range(0, len(keypoint_headers), 3)))
+                                csv_file.flush()
+                                batch_keypoint_count = sum(1 for row in batch_detections
+                                                           if any(row[8+i] != 0.0 for i in range(0, len(keypoint_headers), 3)))
                                 logger.debug(f"📊 バッチCSV書き込み完了: 検出{len(batch_detections)}個, キーポイント付き{batch_keypoint_count}個")
                             except Exception as csv_error:
                                 logger.error(f"❌ CSV書き込みエラー: {csv_error}")
                                 raise
 
-                        # バッチ処理完了後のクリーンアップ
                         del batch_detections
                         processor.force_memory_cleanup()
-
-                        # 統計更新
                         batch_time = time.time() - batch_start_time
                         current_memory = processor.get_memory_usage()
                         stats["batch_times"].append(batch_time)
                         stats["memory_peaks"].append(current_memory)
-
-                        # 進捗報告
                         progress = (batch_end / total_frames) * 100
                         vis_progress = stats["visualization_stats"]["generated"]
                         keypoint_frames = stats["keypoint_stats"]["frames_with_keypoints"]
                         logger.info(f"📊 進捗: {progress:.1f}% (メモリ: {current_memory:.2f}GB, "
-                                f"バッチ時間: {batch_time:.1f}s, 可視化: {vis_progress}個, "
-                                f"モデル: {verification_info.get('estimated_type', 'UNKNOWN')})")
+                                    f"バッチ時間: {batch_time:.1f}s, 可視化: {vis_progress}個, "
+                                    f"モデル: {verification_info.get('estimated_type', 'UNKNOWN')})")
 
                 except Exception as e:
                     logger.error(f"❌ バッチ処理エラー: {e}", exc_info=True)
                     raise VideoProcessingError(f"バッチ処理に失敗しました: {e}", original_exception=e)
 
-            # 最終統計の計算
             stats["unique_ids"] = len(stats["unique_ids"])
             stats["success_rate"] = stats["successful_frames"] / total_frames if total_frames > 0 else 0
             stats["avg_batch_time"] = np.mean(stats["batch_times"]) if stats["batch_times"] else 0
             stats["peak_memory_gb"] = max(stats["memory_peaks"]) if stats["memory_peaks"] else 0
-            
-            # キーポイント統計の計算
             keypoint_stats = stats["keypoint_stats"]
             keypoint_frame_rate = keypoint_stats["frames_with_keypoints"] / total_frames if total_frames > 0 else 0
             avg_keypoints_per_person = np.mean(keypoint_stats["keypoints_per_person"]) if keypoint_stats["keypoints_per_person"] else 0
-            
-            # 可視化統計の追加
             vis_stats = stats["visualization_stats"]
             vis_success_rate = vis_stats["generated"] / total_frames if total_frames > 0 else 0
 
@@ -743,7 +670,6 @@ def analyze_frames_with_tracking_memory_efficient(
             ctx.add_info("avg_keypoints_per_person", avg_keypoints_per_person)
             ctx.add_info("model_type_used", verification_info.get('estimated_type', 'UNKNOWN'))
 
-            # 🎯 最終結果サマリーのログ出力
             logger.info("🎯 ========== 処理完了サマリー ==========")
             logger.info(f"📊 処理完了統計:")
             logger.info(f"  ✅ 成功率: {stats['success_rate']:.1%}")

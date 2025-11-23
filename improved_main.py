@@ -25,6 +25,7 @@ import time
 from datetime import datetime  # 🔧 追加
 import traceback
 import platform
+from utils.camera_calibration import undistort_with_json
 
 # 🔧 条件付きインポート - 必須ライブラリ
 try:
@@ -696,6 +697,8 @@ if not VIDEO_PROCESSOR_AVAILABLE:
                         if frame is None:
                             self.logger.warning(f"⚠️ フレーム読み込み失敗: {frame_file}")
                             continue
+
+                        frame = undistort_with_json(frame, calib_path="configs/camera_params.json")
 
                         frame_detections = 0
 
@@ -2415,9 +2418,11 @@ class ImprovedYOLOAnalyzer:
     def create_6point_visualization(self, output_dir, keypoints_df, frame_dir, log_path=None):
         """
         frameカラムが画像ファイル名の場合に対応した6点可視化
+        歪み補正も適用可能
         """
         import cv2
         from pathlib import Path
+        from utils.camera_calibration import undistort_with_json
 
         vis_dir = Path(output_dir) / "visualized_frames_6points"
         vis_dir.mkdir(parents=True, exist_ok=True)
@@ -2435,6 +2440,8 @@ class ImprovedYOLOAnalyzer:
                 continue
 
             frame = cv2.imread(str(frame_path))
+            frame = undistort_with_json(frame, calib_path="configs/camera_params.json")
+
             rows = keypoints_df[keypoints_df['frame'] == frame_name]
             for _, row in rows.iterrows():
                 keypoints = {
