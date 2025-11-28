@@ -7,14 +7,16 @@ def load_exponential_params(json_dir):
     指定ディレクトリ内のfunction_parameters.jsonから指数減衰関数パラメータ(a, b, c)を取得
     """
     json_path = os.path.join(json_dir, 'function_parameters.json')
-    with open(json_path, 'r', encoding='utf-8') as f:
+    with open(json_path, 'r', encoding='utf-8-sig') as f:
         params = json.load(f)
-    # 例: best_function > details > parameters
+    # 修正: 階層を直接取得
     try:
-        a, b, c = params['best_function']['details']['parameters']
-    except (KeyError, TypeError, ValueError):
+        a = params['parameters']['a']
+        b = params['parameters']['b']
+        c = params['parameters']['c']
+        return a, b, c
+    except Exception:
         raise ValueError("function_parameters.jsonからパラメータ(a, b, c)を取得できません")
-    return a, b, c
 
 def exponential_decay(distance, a, b, c):
     """

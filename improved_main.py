@@ -2885,9 +2885,20 @@ def main():
     print("正規化処理を使いますか？(y/n): ", end="")
     use_normalization = input().strip().lower() == "y"
     normalization_params = None
+    normalization_input_csv = None
 
     if use_normalization:
-        json_dir = input("function_parameters.jsonがあるフォルダを指定してください: ").strip()
+        print("正規化元CSVファイルがあるフォルダを指定してください: ", end="")
+        csv_dir = input().strip()
+        csv_path = os.path.join(csv_dir, "6point_metrics_with_column.csv")
+        if os.path.exists(csv_path):
+            normalization_input_csv = csv_path
+        else:
+            print("❌ 6point_metrics_with_column.csvが見つかりません。正規化処理をスキップします。")
+            use_normalization = False
+
+        print("function_parameters.jsonがあるフォルダを指定してください: ", end="")
+        json_dir = input().strip()
         json_path = os.path.join(json_dir, "function_parameters.json")
         if os.path.exists(json_path):
             from analysis.normalization_preparation import load_exponential_params, normalize_value_by_decay
@@ -3069,38 +3080,26 @@ def main():
                 json.dump(result, f, indent=2, ensure_ascii=False)
             logger.info(f"📄 サマリー保存: {summary_file}")
 
-            logger.info("🎯 ========== 処理完了 ==========")
-            if args.use_4points:
-                logger.info("💡 4点キーポイントデータを確認してください:")
-                logger.info("   - 4point_keypoints.csv: フィルタリング済みデータ")
-                logger.info("   - 4point_metrics.csv: 姿勢メトリクス付きデータ")
-            if args.enable_depth:
-                logger.info("💡 深度推定データを確認してください:")
-                logger.info("   - depth_analysis/ ディレクトリ内の深度マップ")
-
-                if use_normalization and normalization_params:
-                    metrics_csv_path = os.path.join(str(output_dir), "6point_metrics.csv")
-                    if os.path.exists(metrics_csv_path):
-                        import pandas as pd
-                        df = pd.read_csv(metrics_csv_path)
-                        if "shoulder_head_angle" in df.columns and "column_position" in df.columns:
-                            a, b, c = normalization_params
-                            df["shoulder_head_angle_normalized"] = df.apply(
-                                lambda row: normalize_value_by_decay(
-                                    row["shoulder_head_angle"],
-                                    row["column_position"],
-                                    a, b, c,
-                                    reference_distance=1
-                                ),
-                                axis=1
-                            )
-                            out_csv = os.path.join(str(output_dir), "6point_metrics_normalized.csv")
-                            df.to_csv(out_csv, index=False, encoding="utf-8-sig")
-                            logger.info(f"✅ 正規化済みCSVを保存しました: {out_csv}")
-                        else:
-                            logger.warning("❌ 必要な列（shoulder_head_angle, column_position）がCSVに存在しません。")
-                    else:
-                        logger.warning(f"❌ メトリクスCSVが存在しません: {metrics_csv_path}")
+            # --- 正規化処理を動画推論せず既存CSVから実行 ---
+            if use_normalization and normalization_params and normalization_input_csv:
+                import pandas as pd
+                df = pd.read_csv(normalization_input_csv)
+                if "shoulder_head_angle" in df.columns and "column_position" in df.columns:
+                    a, b, c = normalization_params
+                    df["shoulder_head_angle_normalized"] = df.apply(
+                        lambda row: normalize_value_by_decay(
+                            row["shoulder_head_angle"],
+                            row["column_position"],
+                            a, b, c,
+                            reference_distance=1
+                        ),
+                        axis=1
+                    )
+                    out_csv = os.path.join(str(output_dir), "6point_metrics_normalized.csv")
+                    df.to_csv(out_csv, index=False, encoding="utf-8-sig")
+                    logger.info(f"✅ 正規化済みCSVを保存しました: {out_csv}")
+                else:
+                    logger.warning("❌ 必要な列（shoulder_head_angle, column_position）がCSVに存在しません。")
 
             return 0
 
