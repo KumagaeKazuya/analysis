@@ -14,12 +14,16 @@ data/raw/
 data/processed/
 logs/
 outputs/
+!outputs/normalization_analysis/
+!outputs/normalization_analysis/analysis_*/
 runs/
 
 # Analysis specific outputs (新規追加)
 frame_analysis_results/
 normalization_analysis/
+!normalization_analysis/analysis_*/
 analysis_*/
+!analysis_*/
 *.txt
 *.csv
 
