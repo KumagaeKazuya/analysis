@@ -3084,22 +3084,54 @@ def main():
             if use_normalization and normalization_params and normalization_input_csv:
                 import pandas as pd
                 df = pd.read_csv(normalization_input_csv)
-                if "shoulder_head_angle" in df.columns and "column_position" in df.columns:
-                    a, b, c = normalization_params
-                    df["shoulder_head_angle_normalized"] = df.apply(
+                a, b, c = normalization_params
+                from analysis.normalization_preparation import normalize_value_by_decay
+
+                # 肩幅の正規化
+                if "shoulder_width" in df.columns and "column_position" in df.columns:
+                    df["shoulder_width_normalized"] = df.apply(
                         lambda row: normalize_value_by_decay(
-                            row["shoulder_head_angle"],
+                            row["shoulder_width"],
                             row["column_position"],
                             a, b, c,
                             reference_distance=1
                         ),
                         axis=1
                     )
-                    out_csv = os.path.join(str(output_dir), "6point_metrics_normalized.csv")
-                    df.to_csv(out_csv, index=False, encoding="utf-8-sig")
-                    logger.info(f"✅ 正規化済みCSVを保存しました: {out_csv}")
-                else:
-                    logger.warning("❌ 必要な列（shoulder_head_angle, column_position）がCSVに存在しません。")
+                # 両耳幅の正規化
+                if ("left_ear_x" in df.columns and "right_ear_x" in df.columns and
+                    "left_ear_y" in df.columns and "right_ear_y" in df.columns and
+                    "column_position" in df.columns):
+                    df["ear_width"] = ((df["left_ear_x"] - df["right_ear_x"])**2 + (df["left_ear_y"] - df["right_ear_y"])**2)**0.5
+                    df["ear_width_normalized"] = df.apply(
+                        lambda row: normalize_value_by_decay(
+                            row["ear_width"],
+                            row["column_position"],
+                            a, b, c,
+                            reference_distance=1
+                        ),
+                        axis=1
+                    )
+                # 両肩中点〜両耳中点の距離の正規化
+                if ("shoulder_mid_x" in df.columns and "shoulder_mid_y" in df.columns and
+                    "head_center_x" in df.columns and "head_center_y" in df.columns and
+                    "column_position" in df.columns):
+                    df["shoulder_head_dist"] = ((df["shoulder_mid_x"] - df["head_center_x"])**2 + (df["shoulder_mid_y"] - df["head_center_y"])**2)**0.5
+                    df["shoulder_head_dist_normalized"] = df.apply(
+                        lambda row: normalize_value_by_decay(
+                            row["shoulder_head_dist"],
+                            row["column_position"],
+                            a, b, c,
+                            reference_distance=1
+                        ),
+                        axis=1
+                    )
+                # 角度の正規化は削除（そのまま値を使う）
+                out_csv = os.path.join(str(output_dir), "6point_metrics_normalized.csv")
+                df.to_csv(out_csv, index=False, encoding="utf-8-sig")
+                logger.info(f"✅ 正規化済みCSVを保存しました: {out_csv}")
+            else:
+                logger.warning("❌ 必要な列（shoulder_head_angle, column_position）がCSVに存在しません。")
 
             return 0
 
