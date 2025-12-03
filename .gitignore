@@ -20,7 +20,6 @@ runs/
 
 # Analysis specific outputs (新規追加)
 frame_analysis_results/
-normalization_analysis/
 !analysis/analysis/normalization_analysis/**
 analysis_*/
 !analysis_*/
