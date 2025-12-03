@@ -381,7 +381,7 @@ def main():
     output_image = os.path.join(img_dir, "detected_monitors.png")
 
     # 必要なファイルを自動探索
-    input_video = find_file(base_dir, "video", "mp4", "output_corrected")
+    input_video = find_file(base_dir, "video", "mp4")
     threshold_config = find_file(base_dir, "json", "json", "threshold_config")
 
     print("=" * 60)

@@ -248,7 +248,7 @@ class MonitorPoseDetector:
 def main():
     args = parse_args()
     base_dir = args.project_dir
-    input_video = find_file(base_dir, "video", "mp4", "output_corrected")
+    input_video = find_file(base_dir, "video", "mp4", "output_monitor_rois")
     monitor_states_json = find_file(base_dir, "json", "json", "monitor_states")
     output_video = os.path.join(base_dir, "video", "output_with_pose.mp4")
     debug_roi_dir = os.path.join(base_dir, "debug_roi")
