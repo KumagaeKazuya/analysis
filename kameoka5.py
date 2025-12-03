@@ -396,7 +396,7 @@ def main():
     base_dir = args.project_dir
 
     # 入力ファイル探索
-    input_video = find_file(base_dir, "", "mp4", "output_corrected")
+    input_video = find_file(base_dir, "video", "mp4")
     monitor_config_json = find_file(base_dir, "json", "json", "monitor_config")
     threshold_config_json = find_file(base_dir, "json", "json", "threshold_config")
     output_video = os.path.join(base_dir, "video", "output_monitor_rois.mp4")
