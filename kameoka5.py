@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument("--project-dir", type=str, required=True, help="タイムスタンプ付きプロジェクトフォルダ")
     parser.add_argument("--show-preview", action="store_true", help="処理中にプレビュー表示")
     parser.add_argument("--save-rois", action="store_true", help="ROI画像を保存する")
-    parser.add_argument("--save-interval", type=int, default=30, help="ROI画像保存間隔（フレーム数）")
+    parser.add_argument("--save-interval", type=int, default=40, help="ROI画像保存間隔（フレーム数）")
     return parser.parse_args()
 
 POWER_DETECTION_CONFIG = {
@@ -403,6 +403,7 @@ def main():
     roi_output_dir = os.path.join(base_dir, "roi")
     monitor_states_json = os.path.join(base_dir, "json", "monitor_states.json")
 
+    # save_intervalを40に固定
     VIDEO_CONFIG = {
         "input_path": input_video,
         "output_path": output_video,
@@ -412,7 +413,7 @@ def main():
         "monitor_config_json": monitor_config_json,
         "show_preview": args.show_preview,
         "save_rois": args.save_rois,
-        "save_interval": args.save_interval,
+        "save_interval": 40,  # ここを40に固定
     }
 
     if not input_video or not os.path.exists(monitor_config_json) or not os.path.exists(threshold_config_json):

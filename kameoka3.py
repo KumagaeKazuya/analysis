@@ -40,7 +40,7 @@ def sample_monitor_brightness(video_path, monitors, num_samples=30):
     if not cap.isOpened():
         raise FileNotFoundError(f"動画を開けません: {video_path}")
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    sample_interval = max(1, total_frames // num_samples)
+    sample_interval = 40
     logger.info(f"明るさサンプリング中... (総フレーム: {total_frames}, 間隔: {sample_interval})")
     brightness_data = {i: [] for i in range(len(monitors))}
     frame_idx = 0

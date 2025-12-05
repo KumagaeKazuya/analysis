@@ -7,6 +7,8 @@ import argparse
 import glob
 from typing import List, Dict, Tuple
 from ultralytics import YOLO
+import pandas as pd
+import datetime
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -23,8 +25,26 @@ def parse_args():
     parser = argparse.ArgumentParser(description="YOLOpose + モニターROI検出システム")
     parser.add_argument("--project-dir", type=str, required=True, help="kameoka1.pyで作成したプロジェクトフォルダ")
     parser.add_argument("--show-preview", action="store_true", help="処理中にプレビュー表示")
-    parser.add_argument("--save-debug-rois", action="store_true", help="ROI画像を保存する")
+    parser.add_argument("--save-debug-rois", action="store_true", help="ROI画像を保存する（未使用）")
     return parser.parse_args()
+
+COCO_KEYPOINT_NAMES = [
+    "nose", "left_eye", "right_eye", "left_ear", "right_ear",
+    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow",
+    "left_wrist", "right_wrist", "left_hip", "right_hip",
+    "left_knee", "right_knee", "left_ankle", "right_ankle"
+]
+
+def iou(boxA, boxB):
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+    interArea = max(0, xB - xA) * max(0, yB - yA)
+    boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    unionArea = boxAArea + boxBArea - interArea
+    return interArea / unionArea if unionArea > 0 else 0
 
 class MonitorPoseDetector:
     def __init__(self, config: Dict):
@@ -32,9 +52,6 @@ class MonitorPoseDetector:
         self.monitor_states = self._load_monitor_states()
         self.model = YOLO(config["yolo_model"])
         self.frame_count = 0
-        
-        if config.get("save_debug_rois", False):
-            os.makedirs(config.get("debug_roi_dir", "debug_roi"), exist_ok=True)
         
         logger.info(f"YOLOモデル読み込み: {config['yolo_model']}")
         logger.info(f"モニター状態データ: {len(self.monitor_states)}フレーム分")
@@ -201,20 +218,56 @@ class MonitorPoseDetector:
         out = cv2.VideoWriter(self.config["output_video"], fourcc, fps, (width, height))
         total_detections = 0
         detection_by_monitor = {}
+        all_csv_rows = []
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        save_dir = os.path.join(self.config.get("project_dir", "."), f"step6_{timestamp}")
+        os.makedirs(save_dir, exist_ok=True)
+        frame_save_dir = os.path.join(save_dir, "frames")
+        os.makedirs(frame_save_dir, exist_ok=True)
         try:
             while True:
                 ret, frame = cap.read()
                 if not ret:
                     break
+                frame_idx = self.frame_count
                 self.frame_count += 1
-                detections = self.detect_poses_in_rois(frame, self.frame_count)
-                active_monitors = self.get_active_monitors(self.frame_count)
+                if frame_idx % 40 != 0:
+                    continue
+                frame_filename = f"frame_{frame_idx:06d}.jpg"
+                frame_path = os.path.join(frame_save_dir, frame_filename)
+                cv2.imwrite(frame_path, frame)
+                detections = self.detect_poses_in_rois(frame, frame_idx)
+                active_monitors = self.get_active_monitors(frame_idx)
                 total_detections += len(detections)
+
+                # --- CSV出力 ---
                 for det in detections:
                     monitor_name = det["monitor_name"]
+                    monitor_id = det["monitor_id"]
                     if monitor_name not in detection_by_monitor:
                         detection_by_monitor[monitor_name] = 0
                     detection_by_monitor[monitor_name] += 1
+                    row = {
+                        "frame": frame_filename,
+                        "person_id": monitor_id,  # ← monitor_idをそのままperson_idに
+                        "x1": det["person_box"][0],
+                        "y1": det["person_box"][1],
+                        "x2": det["person_box"][2],
+                        "y2": det["person_box"][3],
+                        "conf": det.get("confidence", None),
+                        "monitor_id": monitor_id,
+                        "monitor_name": monitor_name,
+                    }
+                    for idx, kp in enumerate(det["keypoints"]):
+                        row[f"keypoint_{idx}_x"] = kp["x"]
+                        row[f"keypoint_{idx}_y"] = kp["y"]
+                        row[f"keypoint_{idx}_conf"] = kp["confidence"]
+                        if idx < len(COCO_KEYPOINT_NAMES):
+                            name = COCO_KEYPOINT_NAMES[idx]
+                            row[f"{name}_x"] = kp["x"]
+                            row[f"{name}_y"] = kp["y"]
+                            row[f"{name}_conf"] = kp["confidence"]
+                    all_csv_rows.append(row)
                 result = self.draw_results(frame, detections, active_monitors)
                 result = self.draw_info(result, detections, len(active_monitors))
                 out.write(result)
@@ -230,7 +283,12 @@ class MonitorPoseDetector:
             out.release()
             cv2.destroyAllWindows()
             self._print_statistics(total_detections, detection_by_monitor)
-    
+            if all_csv_rows:
+                df = pd.DataFrame(all_csv_rows)
+                csv_path = os.path.join(save_dir, "results.csv")
+                df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+                logger.info(f"CSV保存: {csv_path}")
+
     def _print_statistics(self, total: int, by_monitor: Dict):
         logger.info("=" * 80)
         logger.info("検出統計")
@@ -252,7 +310,7 @@ def main():
     monitor_states_json = find_file(base_dir, "json", "json", "monitor_states")
     output_video = os.path.join(base_dir, "video", "output_with_pose.mp4")
     debug_roi_dir = os.path.join(base_dir, "debug_roi")
-    yolo_model = "yolo11m-pose.pt"
+    yolo_model = "yolo11x-pose.pt"
     config = {
         "input_video": input_video,
         "output_video": output_video,
@@ -267,6 +325,7 @@ def main():
         "draw_monitor_boxes": True,
         "save_debug_rois": args.save_debug_rois,
         "debug_roi_dir": debug_roi_dir,
+        "project_dir": base_dir,
     }
     logger.info("=" * 80)
     logger.info("YOLOpose + モニターROI検出システム")

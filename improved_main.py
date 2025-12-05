@@ -2415,14 +2415,10 @@ class ImprovedYOLOAnalyzer:
 
         return metrics_df
 
-    def create_6point_visualization(self, output_dir, keypoints_df, frame_dir, log_path=None):
-        """
-        frameカラムが画像ファイル名の場合に対応した6点可視化
-        歪み補正も適用可能
-        """
+    def create_6point_visualization(self, output_dir, keypoints_df, frame_dir, log_path=None, apply_undistort=True):
         import cv2
         from pathlib import Path
-        from utils.camera_calibration import undistort_with_json
+        # from utils.camera_calibration import undistort_with_json
 
         vis_dir = Path(output_dir) / "visualized_frames_6points"
         vis_dir.mkdir(parents=True, exist_ok=True)
@@ -2440,7 +2436,10 @@ class ImprovedYOLOAnalyzer:
                 continue
 
             frame = cv2.imread(str(frame_path))
-            frame = undistort_with_json(frame, calib_path="configs/camera_params.json")
+            # --- 修正: apply_undistortフラグで制御 ---
+            if apply_undistort:
+                from utils.camera_calibration import undistort_with_json
+                frame = undistort_with_json(frame, calib_path="configs/camera_params.json")
 
             rows = keypoints_df[keypoints_df['frame'] == frame_name]
             for _, row in rows.iterrows():
@@ -2854,10 +2853,11 @@ def main():
     python improved_main.py input.mp4 --enable-depth --depth-model dpt_hybrid
     python improved_main.py input.mp4 --config custom_config.yaml
     python improved_main.py input.mp4 --resolution 1920x1080 --quality high
+    python improved_main.py --csv step6_xxxx/results.csv --frames-dir step6_xxxx/frames
         """
     )
 
-    parser.add_argument('video_path', type=str, help='🎬 分析対象の動画ファイルパス')
+    parser.add_argument('video_path', type=str, nargs='?', help='🎬 分析対象の動画ファイルパス')
     parser.add_argument('--config', type=str, default=None, help='⚙️ 設定ファイルパス（YAML/JSON形式）')
     parser.add_argument('--output-dir', type=str, default=None, help='📁 出力ディレクトリ')
     parser.add_argument('--use-4points', action='store_true', help='🦴 4点キーポイントモードを有効化')
@@ -2878,6 +2878,8 @@ def main():
     parser.add_argument('--iou-threshold', type=float, default=0.45, help='📐 IoU閾値')
     parser.add_argument('--disable-visualization', action='store_true', help='🚫 可視化出力を無効化')
     parser.add_argument('--output-format', type=str, default='csv', choices=['csv', 'json', 'both'], help='📊 出力データ形式')
+    parser.add_argument('--csv', type=str, default=None, help='📊 既存検出結果CSV（動画推論せず可視化・メトリクスのみ実行）')
+    parser.add_argument('--frames-dir', type=str, default=None, help='🖼️ フレーム画像ディレクトリ（CSVと合わせて指定）')
 
     args = parser.parse_args()
 
@@ -2929,7 +2931,29 @@ def main():
         logger.info("🐛 デバッグモードが有効化されました")
 
     try:
-        if not Path(args.video_path).exists():
+        # --- 既存CSVとフレーム画像から可視化・メトリクスのみ実行する場合 ---
+        if args.csv and args.frames_dir:
+            csv_path = Path(args.csv)
+            frame_dir = Path(args.frames_dir)
+            output_dir = Path(args.output_dir) if args.output_dir else csv_path.parent
+
+            logger.info(f"📊 既存CSVから6点抽出・可視化・メトリクス処理を開始します")
+            analyzer = ImprovedYOLOAnalyzer(config_path=args.config or "configs/default.yaml")
+
+            # 6点キーポイント抽出＆メトリクス計算
+            filter_result = analyzer.filter_keypoints_to_6points(str(csv_path), str(output_dir))
+            sixpoint_csv = filter_result["sixpoint_csv"]
+
+            # 可視化画像生成（歪み補正をかけない！）
+            import pandas as pd
+            keypoints_df = pd.read_csv(sixpoint_csv)
+            analyzer.create_6point_visualization(str(output_dir), keypoints_df, frame_dir, apply_undistort=False)
+
+            logger.info("✅ 既存CSVからの6点可視化・メトリクス処理が完了しました")
+            return 0
+
+        # --- 通常の動画推論処理 ---
+        if not args.video_path or not Path(args.video_path).exists():
             logger.error(f"❌ 動画ファイルが見つかりません: {args.video_path}")
             return 1
 
@@ -3020,11 +3044,11 @@ def main():
             processing_config['model_size'] = model_size_map.get(args.model_size, 'xlarge')
 
         logger.info("🚀 ========== 姿勢分析処理開始 ==========")
+        import time
         start_time = time.time()
 
         try:
             # ベースライン分析実行（タイムスタンプ付きoutput_dirを渡す）
-            # ImprovedYOLOAnalyzerのrun_baseline_analysisをoutput_dir対応にする必要あり
             result = analyzer.run_baseline_analysis(str(video_path), output_dir=output_dir)
             if not result.get("success", False):
                 error_msg = result.get("error", "不明なエラー")

@@ -365,7 +365,7 @@ def visualize_result(video_path, monitors, monitors_with_person, monitors_withou
 def main():
     parser = argparse.ArgumentParser(description="自動bbox生成スクリプト（ROI検出・ONモニターのみ）")
     parser.add_argument("--project-dir", type=str, required=True, help="タイムスタンプ付きプロジェクトフォルダ")
-    parser.add_argument("--yolo-model", type=str, default="yolo11m.pt", help="YOLOモデルファイルパス")
+    parser.add_argument("--yolo-model", type=str, default="yolo11x.pt", help="YOLOモデルファイルパス")
     parser.add_argument("--sample-interval-sec", type=int, default=15, help="サンプリング間隔（秒）")
     parser.add_argument("--min-detection-count", type=int, default=1, help="検出最低回数")
     parser.add_argument("--roi-margin", type=float, default=0.25, help="ROIマージン（割合）")
@@ -394,10 +394,25 @@ def main():
         print(f"threshold_config: {threshold_config}")
         return
 
+    # --- ここから修正: 40フレームごとに強制 ---
+    # 動画のfpsを取得してsample_interval_secを上書き
+    cap = cv2.VideoCapture(input_video)
+    if not cap.isOpened():
+        print(f"\n【エラー】動画を開けません: {input_video}")
+        return
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    if fps <= 0:
+        print(f"\n【エラー】動画のFPSが取得できません: {input_video}")
+        return
+    sample_interval_sec = 40 / fps  # 40フレームごと
+    print(f"\n[設定] サンプリング間隔を40フレームごと（約{sample_interval_sec:.2f}秒）に固定します。")
+    # --- 修正ここまで ---
+
     try:
         result = generate_monitor_config(
             input_video,
-            args.sample_interval_sec,
+            sample_interval_sec,  # ←ここに上書きした値を渡す
             args.yolo_model,
             args.roi_margin,
             args.roi_confidence,
