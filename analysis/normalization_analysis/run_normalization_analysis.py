@@ -71,7 +71,7 @@ def extract_column_assignments_from_csv(csv_path):
     col_dict = {}
     for _, row in df.iterrows():
         try:
-            col = int(row['column_position'])
+            col = int(float(row['column_position']))
             pid = int(row['person_id'])
             if col > 0:
                 col_dict.setdefault(col, []).append(pid)
@@ -100,8 +100,8 @@ def plot_shoulder_width_vs_column_with_fit(csv_path, output_dir):
     - 正規化関数コードも自動生成
     """
     df = pd.read_csv(csv_path, encoding='utf-8-sig')
-    # -1やNoneは除外
-    df = df[df['column_position'].apply(lambda x: pd.notnull(x) and str(x).isdigit() and int(x) > 0)]
+    # -1やNoneは除外（float型にも対応）
+    df = df[df['column_position'].apply(lambda x: pd.notnull(x) and float(x) > 0)]
     if 'column_position' not in df.columns or 'shoulder_width' not in df.columns:
         print("❌ 必要なカラムがありません")
         return
@@ -184,15 +184,24 @@ def plot_angle_boxplot_by_column(csv_path, output_dir):
     列位置ごとのなす角分布（箱ひげ図）を出力
     """
     df = pd.read_csv(csv_path, encoding='utf-8-sig')
-    # -1やNoneは除外
-    df = df[df['column_position'].apply(lambda x: pd.notnull(x) and str(x).isdigit() and int(x) > 0)]
+    # -1やNoneは除外（float型にも対応）
+    df = df[df['column_position'].apply(lambda x: pd.notnull(x) and float(x) > 0)]
     if 'column_position' not in df.columns or 'shoulder_head_angle' not in df.columns:
         print("❌ 必要なカラムがありません")
         return
 
     grouped = df.groupby('column_position')['shoulder_head_angle']
-    data = [group.dropna().values for _, group in grouped]
-    labels = [str(col) for col in grouped.groups.keys()]
+    data = []
+    labels = []
+    for col, group in grouped:
+        values = group.dropna().values
+        if len(values) > 0:
+            data.append(values)
+            labels.append(str(col))
+
+    if len(data) == 0:
+        print("⚠️ 箱ひげ図を描画するデータがありません")
+        return
 
     plt.figure(figsize=(10, 6))
     plt.boxplot(data, labels=labels, patch_artist=True,

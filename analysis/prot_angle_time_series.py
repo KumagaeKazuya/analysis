@@ -16,7 +16,7 @@ csv_path = sys.argv[1]
 df = pd.read_csv(csv_path)
 
 def extract_frame_number(frame_name):
-    match = re.search(r'frame(\d+)', frame_name)
+    match = re.search(r'frame[_\-]?(\d+)', str(frame_name))
     return int(match.group(1)) if match else None
 
 df['frame_number'] = df['frame'].apply(extract_frame_number)
