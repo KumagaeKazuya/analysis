@@ -33,6 +33,7 @@ POWER_DETECTION_CONFIG = {
     "stability_window": 15,
     "on_threshold": 0.6,
     "confidence_distance": 50,
+    "persistent_mode": True,  # 永続モードを追加
 }
 
 ROI_EXTRACTION_CONFIG = {
@@ -61,6 +62,7 @@ class MonitorInfo:
     display_bbox: Optional[Tuple[int, int, int, int]] = None
     mean_brightness: float = -1.0
     is_powered_on: bool = False
+    ever_powered_on: bool = False  # 永続モード用
     confidence: float = 0.0
     power_history: Optional[deque] = None
     brightness_history: Optional[List[float]] = None
@@ -78,6 +80,7 @@ class MonitorInfo:
             "bbox": list(self.bbox),
             "group": str(self.group),
             "is_powered_on": bool(self.is_powered_on),
+            "ever_powered_on": bool(self.ever_powered_on),  # 追加
             "confidence": float(self.confidence),
             "mean_brightness": float(self.mean_brightness),
             "display_bbox": list(self.display_bbox) if self.display_bbox else None,
@@ -125,6 +128,7 @@ class MonitorDetectionSystem:
         self._initialize_monitors()
         logger.info(f"モニター登録: {len(self.detected_monitors)}台")
         logger.info(f"使用閾値: {threshold} (方法: {threshold_method})")
+        logger.info(f"永続モード: {'ON' if self.power_config.get('persistent_mode', False) else 'OFF'}")
 
     def _initialize_monitors(self):
         for i, m_cfg in enumerate(self.monitor_config["monitors"]):
@@ -161,6 +165,9 @@ class MonitorDetectionSystem:
         return {'mean_brightness': mean_brightness}
 
     def judge_power_state(self, monitor: MonitorInfo) -> Tuple[bool, float]:
+        # 永続モードが有効で、一度でもONになっていたら常にON
+        if self.power_config.get("persistent_mode", False) and monitor.ever_powered_on:
+            return True, 1.0
         is_on = monitor.mean_brightness > self.threshold
         distance = abs(monitor.mean_brightness - self.threshold)
         confidence = min(distance / self.power_config["confidence_distance"], 1.0)
@@ -184,9 +191,22 @@ class MonitorDetectionSystem:
                 recent = list(monitor.power_history)[-window:]
                 on_ratio = sum(recent) / len(recent)
                 threshold = self.power_config["on_threshold"]
-                monitor.is_powered_on = on_ratio > threshold
+                current_state = on_ratio > threshold
+                # 一度でもONになったら記録
+                if current_state:
+                    monitor.ever_powered_on = True
+                # 永続モードが有効なら、一度ONになったら維持
+                if self.power_config.get("persistent_mode", False) and monitor.ever_powered_on:
+                    monitor.is_powered_on = True
+                else:
+                    monitor.is_powered_on = current_state
             else:
-                monitor.is_powered_on = is_on
+                if is_on:
+                    monitor.ever_powered_on = True
+                if self.power_config.get("persistent_mode", False) and monitor.ever_powered_on:
+                    monitor.is_powered_on = True
+                else:
+                    monitor.is_powered_on = is_on
 
     def get_powered_on_monitors(self) -> List[MonitorInfo]:
         return [m for m in self.detected_monitors if m.is_powered_on]
@@ -231,9 +251,15 @@ class MonitorDetectionSystem:
                     dx1, dy1, dx2, dy2 = monitor.display_bbox
                 else:
                     dx1, dy1, dx2, dy2 = monitor.bbox
-                color = (0, 255, 0)
+                # 永続ONの場合は色を変える
+                if self.power_config.get("persistent_mode", False) and monitor.ever_powered_on:
+                    color = (0, 255, 255)  # シアン
+                else:
+                    color = (0, 255, 0)
                 cv2.rectangle(frame, (dx1, dy1), (dx2, dy2), color, 3)
                 monitor_text = f"{monitor.id}"
+                if monitor.ever_powered_on and self.power_config.get("persistent_mode", False):
+                    monitor_text += " [P]"
                 cv2.putText(frame, monitor_text,
                             (dx1, dy1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
                 brightness_text = f"{monitor.mean_brightness:.0f}"
@@ -256,6 +282,7 @@ class VideoAnalysisSystem:
             os.makedirs(self.video_config["roi_output_dir"], exist_ok=True)
         self.json_file = open(self.video_config["monitor_states_json"], 'w', encoding='utf-8')
         logger.info("動画処理システム初期化完了")
+        logger.info(f"永続モード: {'有効' if self.power_config.get('persistent_mode', False) else '無効'}")
 
     def process_video(self):
         cap = cv2.VideoCapture(self.video_config["input_path"])
@@ -296,7 +323,8 @@ class VideoAnalysisSystem:
                 if self.frame_counter % (fps * 10) == 0:
                     progress = (self.frame_counter / total_frames) * 100
                     on_count = sum(1 for m in self.monitor_detector.detected_monitors if m.is_powered_on)
-                    logger.info(f"進捗: {progress:.1f}% | ON: {on_count}/{len(self.monitor_detector.detected_monitors)} | ROI: {len(rois)}")
+                    persistent_count = sum(1 for m in self.monitor_detector.detected_monitors if m.ever_powered_on)
+                    logger.info(f"進捗: {progress:.1f}% | ON: {on_count}/{len(self.monitor_detector.detected_monitors)} | 累計検出: {persistent_count} | ROI: {len(rois)}")
         finally:
             cap.release()
             out.release()
@@ -320,18 +348,22 @@ class VideoAnalysisSystem:
     def _draw_info(self, frame: np.ndarray, rois: List[MonitorROI]) -> np.ndarray:
         h, w = frame.shape[:2]
         x, y = w - 550, 30
-        cv2.rectangle(frame, (x - 10, 10), (w - 10, y + 160), (0, 0, 0), -1)
-        cv2.rectangle(frame, (x - 10, 10), (w - 10, y + 160), (255, 255, 255), 1)
+        cv2.rectangle(frame, (x - 10, 10), (w - 10, y + 180), (0, 0, 0), -1)
+        cv2.rectangle(frame, (x - 10, 10), (w - 10, y + 180), (255, 255, 255), 1)
         cv2.putText(frame, f"フレーム: {self.frame_counter}", (x, y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         y += 20
         total = len(self.monitor_detector.detected_monitors)
         on_count = sum(1 for m in self.monitor_detector.detected_monitors if m.is_powered_on)
+        persistent_count = sum(1 for m in self.monitor_detector.detected_monitors if m.ever_powered_on)
         cv2.putText(frame, f"モニター: {total}", (x, y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         y += 20
         cv2.putText(frame, f"ON: {on_count} / OFF: {total - on_count}", (x, y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        y += 20
+        cv2.putText(frame, f"累計検出: {persistent_count}", (x, y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
         y += 20
         cv2.putText(frame, f"ROI: {len(rois)}", (x, y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
@@ -344,6 +376,10 @@ class VideoAnalysisSystem:
         cv2.putText(frame, f"しきい値: {self.threshold} ({method_text})", (x, y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
         y += 20
+        if self.power_config.get("persistent_mode", False):
+            cv2.putText(frame, f"モード: 永続", (x, y),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            y += 20
         cv2.putText(frame, f"JSONに保存しています...", (x, y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
         return frame
@@ -354,8 +390,10 @@ class VideoAnalysisSystem:
         logger.info("=" * 100)
         monitors = self.monitor_detector.detected_monitors
         on_count = sum(1 for m in monitors if m.is_powered_on)
+        persistent_count = sum(1 for m in monitors if m.ever_powered_on)
         logger.info(f"使用閾値: {self.threshold} (方法: {self.threshold_method})")
         logger.info(f"最終結果: ON={on_count}台 / OFF={len(monitors) - on_count}台")
+        logger.info(f"累計検出: {persistent_count}台が一度でもONになった")
         logger.info(f"総ROI抽出数: {roi_stats['total_extracted']}")
         logger.info(f"平均ROI数/フレーム: {roi_stats['total_extracted'] / self.frame_counter:.2f}")
         logger.info("\n明るさ統計:")
