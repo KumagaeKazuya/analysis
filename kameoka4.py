@@ -173,6 +173,8 @@ def generate_monitor_config(video_path, sample_interval_sec, yolo_model, roi_mar
     )
     print(f"\n[Step 2] 各モニターの検出結果を集計...")
     detected_positions = {}
+    # --- グループごとの平均サイズを計算するための準備 ---
+    group_detections = {"top": [], "middle": [], "bottom": []}
     for ref_idx, detections in monitor_detections.items():
         if len(detections) >= min_detection_count:
             avg_cx = int(np.mean([d["cx"] for d in detections]))
@@ -197,6 +199,8 @@ def generate_monitor_config(video_path, sample_interval_sec, yolo_model, roi_mar
                 "detection_method": "roi",
                 "center_offset": round(diff, 1)
             }
+            group = REFERENCE_MONITORS[ref_idx]["group"]
+            group_detections[group].append({"width": avg_width, "height": avg_height})
             monitor_name = REFERENCE_MONITORS[ref_idx]["name"]
             offset_info = f", オフセット={diff:.0f}px" if diff > 80 else ""
             print(f"  {monitor_name}: 検出数={len(detections)}, サイズ({avg_width:.0f}x{avg_height:.0f}), 信頼度={avg_conf:.3f}{offset_info}")
@@ -204,6 +208,15 @@ def generate_monitor_config(video_path, sample_interval_sec, yolo_model, roi_mar
             if len(detections) > 0:
                 print(f"  {REFERENCE_MONITORS[ref_idx]['name']}: 検出数不足 ({len(detections)}回)")
     print(f"\n  人検出によるマッチング: {len(detected_positions)}台")
+    # --- グループごとの平均サイズを計算 ---
+    group_avg_sizes = {}
+    for group in ["top", "middle", "bottom"]:
+        if group_detections[group]:
+            avg_w = np.mean([d["width"] for d in group_detections[group]])
+            avg_h = np.mean([d["height"] for d in group_detections[group]])
+            group_avg_sizes[group] = {"width": avg_w, "height": avg_h}
+        else:
+            group_avg_sizes[group] = {"width": 150, "height": 150}
     print(f"\n[Step 3] 全参照モニターに番号を割り当て...")
     detected_monitors = []
     monitors_with_person = []
@@ -213,46 +226,79 @@ def generate_monitor_config(video_path, sample_interval_sec, yolo_model, roi_mar
         ref_bbox = normalize_bbox(ref_monitor["bbox"])
         ref_cx = (ref_bbox[0] + ref_bbox[2]) // 2
         ref_cy = (ref_bbox[1] + ref_bbox[3]) // 2
-        if ref_idx in detected_positions:
-            detection = detected_positions[ref_idx]
-            rx1, ry1, rx2, ry2 = ref_bbox
-            w = rx2 - rx1
-            h = ry2 - ry1
-            bbox_x1 = max(0, int(rx1 - w * roi_margin / 2))
-            bbox_y1 = max(0, int(ry1 - h * roi_margin / 2))
-            bbox_x2 = int(rx2 + w * roi_margin / 2)
-            bbox_y2 = int(ry2 + h * roi_margin / 2)
-            final_w = bbox_x2 - bbox_x1
-            final_h = bbox_y2 - bbox_y1
-            monitor = {
-                "bbox": [bbox_x1, bbox_y1, bbox_x2, bbox_y2],
-                "display_bbox": list(ref_monitor["display_bbox"]),
-                "name": f"Monitor_{ref_number}",
-                "group": ref_monitor["group"],
-                "center": detection["center"],
-                "detection_count": detection["detection_count"],
-                "avg_confidence": detection["avg_confidence"],
-                "matched_distance": detection["matched_distance"],
-                "reference_number": ref_number,
-                "has_person": True,
-                "detection_method": detection.get("detection_method", "unknown"),
-                "yolo_detected_size": {
-                    "width": round(detection["detected_width"], 1), 
-                    "height": round(detection["detected_height"], 1)
-                },
-                "final_bbox_size": {"width": final_w, "height": final_h}
-            }
-            if "center_offset" in detection:
-                monitor["center_offset"] = detection["center_offset"]
-            monitors_with_person.append(ref_number)
-            method = detection.get("detection_method", "unknown")
-            print(f"  Monitor_{ref_number}: 人検出あり [{method}] (YOLO size={detection['detected_width']:.0f}x{detection['detected_height']:.0f} → 最終size={final_w}x{final_h})")
+        group = ref_monitor["group"]
+        if ref_idx in load_on_monitors(threshold_config_path):
+            if ref_idx in detected_positions:
+                detection = detected_positions[ref_idx]
+                rx1, ry1, rx2, ry2 = ref_bbox
+                w = rx2 - rx1
+                h = ry2 - ry1
+                bbox_x1 = max(0, int(rx1 - w * roi_margin / 2))
+                bbox_y1 = max(0, int(ry1 - h * roi_margin / 2))
+                bbox_x2 = int(rx2 + w * roi_margin / 2)
+                bbox_y2 = int(ry2 + h * roi_margin / 2)
+                final_w = bbox_x2 - bbox_x1
+                final_h = bbox_y2 - bbox_y1
+                monitor = {
+                    "bbox": [bbox_x1, bbox_y1, bbox_x2, bbox_y2],
+                    "display_bbox": list(ref_monitor["display_bbox"]),
+                    "name": f"Monitor_{ref_number}",
+                    "group": group,
+                    "center": detection["center"],
+                    "detection_count": detection["detection_count"],
+                    "avg_confidence": detection["avg_confidence"],
+                    "matched_distance": detection["matched_distance"],
+                    "reference_number": ref_number,
+                    "has_person": True,
+                    "detection_method": detection.get("detection_method", "unknown"),
+                    "yolo_detected_size": {
+                        "width": round(detection["detected_width"], 1), 
+                        "height": round(detection["detected_height"], 1)
+                    },
+                    "final_bbox_size": {"width": final_w, "height": final_h}
+                }
+                if "center_offset" in detection:
+                    monitor["center_offset"] = detection["center_offset"]
+                monitors_with_person.append(ref_number)
+                method = detection.get("detection_method", "unknown")
+                print(f"  Monitor_{ref_number}: 人検出あり [{method}] (YOLO size={detection['detected_width']:.0f}x{detection['detected_height']:.0f} → 最終size={final_w}x{final_h})")
+            else:
+                # YOLO検出失敗時はグループ平均サイズ＋パディングでbbox生成し、has_person: True
+                avg_size = group_avg_sizes[group]
+                avg_w = avg_size["width"]
+                avg_h = avg_size["height"]
+                padding_ratio = 1.5
+                bbox_w = int(avg_w * padding_ratio)
+                bbox_h = int(avg_h * padding_ratio)
+                bbox_x1 = max(0, ref_cx - bbox_w // 2)
+                bbox_y1 = max(0, ref_cy - bbox_h // 2)
+                bbox_x2 = min(1920, ref_cx + bbox_w // 2)  # 画像サイズに合わせて調整
+                bbox_y2 = min(1080, ref_cy + bbox_h // 2)
+                final_w = bbox_x2 - bbox_x1
+                final_h = bbox_y2 - bbox_y1
+                monitor = {
+                    "bbox": [bbox_x1, bbox_y1, bbox_x2, bbox_y2],
+                    "display_bbox": list(ref_monitor["display_bbox"]),
+                    "name": f"Monitor_{ref_number}",
+                    "group": group,
+                    "center": [ref_cx, ref_cy],
+                    "detection_count": 0,
+                    "avg_confidence": 0.0,
+                    "matched_distance": 0.0,
+                    "reference_number": ref_number,
+                    "has_person": True,
+                    "detection_method": "group_average",
+                    "group_average_size": {"width": round(avg_w, 1), "height": round(avg_h, 1)},
+                    "final_bbox_size": {"width": final_w, "height": final_h}
+                }
+                monitors_with_person.append(ref_number)
+                print(f"  Monitor_{ref_number}: YOLO検出失敗→グループ平均サイズでbbox生成 (size={avg_w:.0f}x{avg_h:.0f} → 最終size={final_w}x{final_h})")
         else:
             monitor = {
                 "bbox": list(ref_bbox),
                 "display_bbox": list(ref_monitor["display_bbox"]),
                 "name": f"Monitor_{ref_number}",
-                "group": ref_monitor["group"],
+                "group": group,
                 "center": [ref_cx, ref_cy],
                 "detection_count": 0,
                 "avg_confidence": 0.0,
@@ -337,6 +383,8 @@ def visualize_result(video_path, monitors, monitors_with_person, monitors_withou
                 yolo_h = m["yolo_detected_size"]["height"]
                 method = m.get("detection_method", "?")[0].upper()
                 label += f" [{yolo_w:.0f}x{yolo_h:.0f}]{method}"
+            elif m.get("detection_method") == "group_average":
+                label += " [AVG]"
         cv2.putText(frame, label, (x1, y1 - 5),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
     cv2.putText(frame, f"Total: {len(monitors)} monitors", (10, 30),
