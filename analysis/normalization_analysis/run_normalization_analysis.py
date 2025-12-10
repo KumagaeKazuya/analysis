@@ -88,57 +88,123 @@ def create_analysis_output_dir(base_dir):
     os.makedirs(output_dir, exist_ok=True)
     return output_dir
 
+from datetime import datetime
+import os
+import json
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+
 def plot_shoulder_width_vs_column_with_fit(csv_path, output_dir):
     """
-    距離-肩幅関係グラフを生成
-    - 横軸: 列位置 (column_position)
-    - 縦軸: 肩幅 (shoulder_width)
-    - 個人データ: 点
-    - 列平均: 赤い菱形
-    - 最適指数減衰関数: 曲線
-    - 関数パラメータjson保存
-    - 正規化関数コードも自動生成
+    各列ごとにグループごとの四分位中央値を算出し、各列のグループ中央値平均を赤菱で表示（小さめ）。
+    その赤菱を使ってフィット曲線（青）を描画。
+    グループごとの中央値（灰色点）はそのまま表示。
+    使用したcsvファイル情報もoutput_dirに保存（絶対パス）。
     """
+    group_size = 1200
+    interval = 40
+
     df = pd.read_csv(csv_path, encoding='utf-8-sig')
-    # -1やNoneは除外（float型にも対応）
     df = df[df['column_position'].apply(lambda x: pd.notnull(x) and float(x) > 0)]
-    if 'column_position' not in df.columns or 'shoulder_width' not in df.columns:
+    if 'column_position' not in df.columns or 'shoulder_width' not in df.columns or 'frame' not in df.columns:
         print("❌ 必要なカラムがありません")
         return
 
+    df['frame_num'] = df['frame'].apply(lambda x: int(''.join(filter(str.isdigit, str(x))))
+                                        if isinstance(x, str) else int(x))
+    df = df.sort_values('frame_num')
+    max_frame = df['frame_num'].max()
+    group_starts = list(range(0, max_frame + 1, group_size))
+    columns = sorted(df['column_position'].unique())
+
+    # 各列ごとにグループ中央値リスト
+    col_group_medians = {col: [] for col in columns}
+
+    # グループごとの中央値（灰色点）を集計
+    for start in group_starts:
+        end = start + group_size - 1
+        group_df = df[(df['frame_num'] >= start) & (df['frame_num'] <= end)]
+        required_count = group_size // interval
+        if len(group_df) < required_count:
+            continue
+        for col in columns:
+            col_df = group_df[group_df['column_position'] == col]
+            if len(col_df) < required_count // len(columns):
+                continue
+            q1 = col_df['shoulder_width'].quantile(0.25)
+            q3 = col_df['shoulder_width'].quantile(0.75)
+            iqr_df = col_df[(col_df['shoulder_width'] >= q1) & (col_df['shoulder_width'] <= q3)]
+            if iqr_df.empty:
+                continue
+            median = iqr_df['shoulder_width'].median()
+            col_group_medians[col].append(median)
+
+    # グラフ描画
     plt.figure(figsize=(10, 7))
-    plt.scatter(df['column_position'], df['shoulder_width'], alpha=0.5, label='個人データ')
+    # グループごとの中央値（灰色点）
+    for col in columns:
+        for median in col_group_medians[col]:
+            plt.scatter(col, median, color='gray', alpha=0.7, label='グループ中央値' if col == columns[0] and median == col_group_medians[columns[0]][0] else None)
 
-    mean_df = df.groupby('column_position')['shoulder_width'].mean().reset_index()
-    plt.scatter(mean_df['column_position'], mean_df['shoulder_width'], 
-                color='red', marker='D', s=80, label='列平均')
+    # 各列ごとのグループ中央値平均（赤菱・小さめ）
+    xdata = []
+    ydata = []
+    for col in columns:
+        medians = col_group_medians[col]
+        if len(medians) > 0:
+            xdata.append(col)
+            ydata.append(np.mean(medians))
+            plt.scatter(col, np.mean(medians), color='red', marker='D', s=40, label='列ごと中央値平均' if col == columns[0] else None)
 
+    xdata = np.array(xdata)
+    ydata = np.array(ydata)
+
+    # フィット
     def exp_decay(x, a, b, c):
         return a * np.exp(-b * x) + c
 
-    xdata = mean_df['column_position']
-    ydata = mean_df['shoulder_width']
     fit_params = None
     try:
         popt, pcov = curve_fit(exp_decay, xdata, ydata, p0=(ydata.max(), 0.1, ydata.min()))
         fit_params = popt
-        x_fit = np.linspace(df['column_position'].min(), df['column_position'].max(), 100)
+        x_fit = np.linspace(xdata.min(), xdata.max(), 100)
         y_fit = exp_decay(x_fit, *popt)
-        plt.plot(x_fit, y_fit, color='blue', linewidth=2, label='指数減衰フィット')
+        plt.plot(x_fit, y_fit, color='blue', linewidth=2, label='フィット曲線')
     except Exception as e:
         print(f"指数減衰フィット失敗: {e}")
 
     plt.xlabel('列位置 (column_position)', fontsize=13)
     plt.ylabel('肩幅 (px)', fontsize=13)
-    plt.title('距離-肩幅関係と正規化関数', fontsize=15)
+    plt.title('距離-肩幅関係（列ごと中央値平均・フィット）', fontsize=15)
     plt.legend()
     plt.grid(True, alpha=0.3)
+
+    # --- ここから軸の調整 ---
+    # 縦軸のメモリ拡充
+    ymin = min([min(medians) for medians in col_group_medians.values() if medians]) if col_group_medians else 0
+    ymax = max([max(medians) for medians in col_group_medians.values() if medians]) if col_group_medians else 100
+    plt.ylim(ymin - 20, ymax + 40)  # 余裕を持たせて拡充
+
+    # 横軸は整数のみ表示
+    plt.xticks([int(c) for c in columns])
 
     output_path = os.path.join(output_dir, "shoulder_width_vs_column_fit.png")
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
     plt.close()
     print(f"✅ 距離-肩幅関係グラフを {output_path} に保存しました")
+
+    # 使用したcsvファイル情報を絶対パスで保存
+    info_path = os.path.join(output_dir, "analysis_info.txt")
+    with open(info_path, "w", encoding="utf-8-sig") as f:
+        f.write(f"分析日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"使用CSV: {os.path.abspath(csv_path)}\n")
+        f.write(f"列番号: {', '.join([str(c) for c in columns])}\n")
+        f.write(f"グループ分割フレーム数: {group_size}\n")
+        f.write(f"抽出間隔フレーム数: {interval}\n")
+    print(f"✅ 分析情報を {info_path} に保存しました")
 
     # 関数パラメータ保存
     if fit_params is not None:
@@ -179,18 +245,116 @@ def normalize_shoulder_width(measured_width, column_position, reference_column=1
             f.write(normalization_code)
         print(f"✅ 正規化関数コードを normalization_function.py に保存しました")
 
+# ...existing code...
+
+def plot_shoulder_width_vs_column_with_fit_iqr(csv_path, output_dir):
+    """
+    距離-肩幅関係グラフ（IQR外れ値除去版）を生成
+    - 横軸: 列位置 (column_position)
+    - 縦軸: 肩幅 (shoulder_width)
+    - 個人データ: 四分位範囲内のみ点表示
+    - 列平均: 赤い菱形
+    - 最適指数減衰関数: 曲線
+    - 関数パラメータjson保存
+    - 正規化関数コードも自動生成
+    """
+    df = pd.read_csv(csv_path, encoding='utf-8-sig')
+    df = df[df['column_position'].apply(lambda x: pd.notnull(x) and float(x) > 0)]
+    if 'column_position' not in df.columns or 'shoulder_width' not in df.columns:
+        print("❌ 必要なカラムがありません")
+        return
+
+    # IQR外れ値除去
+    iqr_mask = np.zeros(len(df), dtype=bool)
+    for col in df['column_position'].unique():
+        col_df = df[df['column_position'] == col]
+        q1 = col_df['shoulder_width'].quantile(0.25)
+        q3 = col_df['shoulder_width'].quantile(0.75)
+        mask = (df['column_position'] == col) & (df['shoulder_width'] >= q1) & (df['shoulder_width'] <= q3)
+        iqr_mask |= mask
+    df_iqr = df[iqr_mask]
+
+    plt.figure(figsize=(10, 7))
+    plt.scatter(df_iqr['column_position'], df_iqr['shoulder_width'], alpha=0.5, label='IQR内個人データ')
+
+    mean_df = df_iqr.groupby('column_position')['shoulder_width'].mean().reset_index()
+    plt.scatter(mean_df['column_position'], mean_df['shoulder_width'], 
+                color='red', marker='D', s=80, label='IQR内列平均')
+
+    def exp_decay(x, a, b, c):
+        return a * np.exp(-b * x) + c
+
+    xdata = mean_df['column_position']
+    ydata = mean_df['shoulder_width']
+    fit_params = None
+    try:
+        popt, pcov = curve_fit(exp_decay, xdata, ydata, p0=(ydata.max(), 0.1, ydata.min()))
+        fit_params = popt
+        x_fit = np.linspace(df['column_position'].min(), df['column_position'].max(), 100)
+        y_fit = exp_decay(x_fit, *popt)
+        plt.plot(x_fit, y_fit, color='blue', linewidth=2, label='指数減衰フィット')
+    except Exception as e:
+        print(f"指数減衰フィット失敗: {e}")
+
+    plt.xlabel('列位置 (column_position)', fontsize=13)
+    plt.ylabel('肩幅 (px)', fontsize=13)
+    plt.title('距離-肩幅関係（IQR外れ値除去）と正規化関数', fontsize=15)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    output_path = os.path.join(output_dir, "shoulder_width_vs_column_fit_iqr.png")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    print(f"✅ 距離-肩幅関係グラフ（IQR外れ値除去）を {output_path} に保存しました")
+
 def plot_angle_boxplot_by_column(csv_path, output_dir):
     """
     列位置ごとのなす角分布（箱ひげ図）を出力
+    肩幅は個人ごとに固定し、両肩の中点→両耳の中点ベクトルと肩ベクトルのなす角を計算
     """
     df = pd.read_csv(csv_path, encoding='utf-8-sig')
     # -1やNoneは除外（float型にも対応）
     df = df[df['column_position'].apply(lambda x: pd.notnull(x) and float(x) > 0)]
-    if 'column_position' not in df.columns or 'shoulder_head_angle' not in df.columns:
+    required_cols = [
+        'column_position', 'person_id', 'shoulder_width',
+        'left_shoulder_x', 'left_shoulder_y', 'right_shoulder_x', 'right_shoulder_y',
+        'left_ear_x', 'left_ear_y', 'right_ear_x', 'right_ear_y'
+    ]
+    if not all(col in df.columns for col in required_cols):
         print("❌ 必要なカラムがありません")
         return
 
-    grouped = df.groupby('column_position')['shoulder_head_angle']
+    # 肩幅を個人ごとに固定
+    shoulder_width_dict = df.groupby('person_id')['shoulder_width'].mean().to_dict()
+
+    def calc_angle_by_fixed_shoulder(row):
+        pid = row['person_id']
+        shoulder_width = shoulder_width_dict.get(pid, np.nan)
+        lx, ly = row['left_shoulder_x'], row['left_shoulder_y']
+        rx, ry = row['right_shoulder_x'], row['right_shoulder_y']
+        center_x = (lx + rx) / 2
+        center_y = (ly + ry) / 2
+        shoulder_mid = np.array([center_x, center_y])
+        shoulder_vec = np.array([shoulder_width, 0])  # 水平方向に肩幅分
+
+        le_x, le_y = row['left_ear_x'], row['left_ear_y']
+        re_x, re_y = row['right_ear_x'], row['right_ear_y']
+        ear_mid = np.array([(le_x + re_x) / 2, (le_y + re_y) / 2])
+        mid_vec = ear_mid - shoulder_mid
+
+        dot = np.dot(shoulder_vec, mid_vec)
+        norm_shoulder = np.linalg.norm(shoulder_vec)
+        norm_mid = np.linalg.norm(mid_vec)
+        if norm_shoulder == 0 or norm_mid == 0:
+            return np.nan
+        cos_theta = dot / (norm_shoulder * norm_mid)
+        cos_theta = np.clip(cos_theta, -1, 1)
+        return np.degrees(np.arccos(cos_theta))
+
+    df['shoulder_head_angle_fixed'] = df.apply(calc_angle_by_fixed_shoulder, axis=1)
+
+    grouped = df.groupby('column_position')['shoulder_head_angle_fixed']
     data = []
     labels = []
     for col, group in grouped:
@@ -207,16 +371,16 @@ def plot_angle_boxplot_by_column(csv_path, output_dir):
     plt.boxplot(data, labels=labels, patch_artist=True,
                 boxprops=dict(facecolor='skyblue', color='navy'),
                 medianprops=dict(color='red'))
-    plt.title('列位置ごとのなす角分布（箱ひげ図）', fontsize=15)
+    plt.title('列位置ごとのなす角分布（肩幅固定・座標ベース・箱ひげ図）', fontsize=15)
     plt.xlabel('列位置 (column_position)', fontsize=13)
     plt.ylabel('なす角 (度)', fontsize=13)
     plt.grid(True, alpha=0.3)
 
-    output_path = os.path.join(output_dir, "angle_boxplot_by_column.png")
+    output_path = os.path.join(output_dir, "angle_boxplot_by_column_fixed_vector.png")
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
     plt.close()
-    print(f"✅ 列位置ごとのなす角箱ひげ図を {output_path} に保存しました")
+    print(f"✅ 列位置ごとのなす角箱ひげ図（肩幅固定・座標ベース）を {output_path} に保存しました")
 
 def check_command(args) -> int:
     """📊 データ確認コマンド"""
@@ -305,6 +469,7 @@ def analyze_one_command(args) -> int:
             print(f"\n🎉 分析成功!")
             print(f"📁 結果フォルダ: {result['analysis_info']['output_dir']}")
             plot_shoulder_width_vs_column_with_fit(args.csv_path, output_dir)
+            plot_shoulder_width_vs_column_with_fit_iqr(args.csv_path, output_dir)  # ←追加
             plot_angle_boxplot_by_column(args.csv_path, output_dir)
             return 0
         else:
@@ -328,6 +493,7 @@ def analyze_all_command(args) -> int:
         print(f"   📋 列構成: {column_assignments}")
         print(f"   📂 出力先: {output_dir}")
         plot_shoulder_width_vs_column_with_fit(args.csv_path, output_dir)
+        plot_shoulder_width_vs_column_with_fit_iqr(args.csv_path, output_dir)  # ←追加
         plot_angle_boxplot_by_column(args.csv_path, output_dir)
         return 0
     except Exception as e:
