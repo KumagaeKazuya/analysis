@@ -260,12 +260,19 @@ def main():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     base_dir = os.path.join("outputs", f"project_{timestamp}")
     video_dir, json_dir, img_dir = get_output_dirs(base_dir)
-    # 入力動画名から拡張子を除去し、output_を付けて保存
     input_basename = os.path.splitext(os.path.basename(args.input_video))[0]
     output_video_path = os.path.join(video_dir, f"output_{input_basename}.mp4")
     process_video(args.input_video, output_video_path, show_preview=args.show_preview)
     logger.info(f"保存先: {base_dir}")
     logger.info("✅動画歪み補正システム通常終了")
+
+    # 使用動画情報をファイル保存
+    info_path = os.path.join(base_dir, "video_info.txt")
+    with open(info_path, "w", encoding="utf-8-sig") as f:
+        f.write(f"処理日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"入力動画: {os.path.abspath(args.input_video)}\n")
+        f.write(f"出力動画: {output_video_path}\n")
+    logger.info(f"✅ 動画情報を {info_path} に保存しました")
 
 if __name__ == "__main__":
     main()
