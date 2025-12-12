@@ -30,10 +30,28 @@ def load_monitor_config(config_file):
     if not os.path.exists(config_file):
         logger.error(f"モニター設定ファイルが見つかりません: {config_file}")
         raise FileNotFoundError(f"{config_file} not found")
-    with open(config_file, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-    logger.info(f"モニター設定を読み込みました: {len(config['monitors'])}台")
-    return config
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        logger.info(f"モニター設定を読み込みました: {len(config['monitors'])}台")
+        return config
+    except json.JSONDecodeError as e:
+        logger.error(f"JSONファイル読み込みエラー: {config_file}")
+        logger.error(f"エラー位置: 行{e.lineno}, 列{e.colno}")
+        logger.error(f"エラー内容: {e.msg}")
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                error_line = e.lineno - 1
+                if 0 <= error_line < len(lines):
+                    logger.error(f"問題のある行 ({e.lineno}): {lines[error_line].strip()}")
+                    logger.error(" " * (e.colno - 1) + "^")
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        logger.error(f"ファイル読み込みエラー: {e}")
+        raise
 
 def sample_monitor_brightness(video_path, monitors, num_samples=30):
     cap = cv2.VideoCapture(video_path)
@@ -77,28 +95,40 @@ def sample_monitor_brightness(video_path, monitors, num_samples=30):
 def calculate_threshold_methods(brightness_values: List[float]) -> Dict:
     brightness_array = np.array(brightness_values)
     methods = {}
-    hist, bins = np.histogram(brightness_array, bins=256, range=(0, 256))
-    otsu_threshold = 0
-    max_variance = 0
-    for t in range(1, 256):
-        w0 = np.sum(hist[:t])
-        w1 = np.sum(hist[t:])
-        if w0 == 0 or w1 == 0:
-            continue
-        mu0 = np.sum(np.arange(t) * hist[:t]) / w0
-        mu1 = np.sum(np.arange(t, 256) * hist[t:]) / w1
-        variance = w0 * w1 * (mu0 - mu1) ** 2
-        if variance > max_variance:
-            max_variance = variance
-            otsu_threshold = t
-    methods['otsu'] = int(otsu_threshold)
-    methods['mean'] = int(np.mean(brightness_array))
-    methods['median'] = int(np.median(brightness_array))
-    methods['percentile_25'] = int(np.percentile(brightness_array, 25))
+    # 中央値
     methods['percentile_50'] = int(np.percentile(brightness_array, 50))
-    methods['percentile_75'] = int(np.percentile(brightness_array, 75))
+    # ギャップ法
     sorted_brightness = np.sort(brightness_array)
-    gap_threshold = 30
+    gaps = []
+    for i in range(1, len(sorted_brightness)):
+        gap = sorted_brightness[i] - sorted_brightness[i-1]
+        gaps.append({
+            'gap': gap,
+            'position': i,
+            'before': sorted_brightness[i-1],
+            'after': sorted_brightness[i]
+        })
+    gaps_sorted = sorted(gaps, key=lambda x: x['gap'], reverse=True)
+    if gaps_sorted:
+        largest_gap = gaps_sorted[0]
+        if largest_gap['gap'] <= 10:
+            logger.info("全てのギャップが10以下 → 全モニター同一状態と判定")
+            logger.info(f"最大ギャップ: {largest_gap['gap']:.1f}")
+            methods['bimodal'] = 100
+            avg_brightness = np.mean(brightness_values)
+            if avg_brightness > 100:
+                logger.info(f"平均明るさ {avg_brightness:.1f} > 100 → 全モニターON")
+            else:
+                logger.info(f"平均明るさ {avg_brightness:.1f} <= 100 → 全モニターOFF")
+            return methods
+        gap_threshold = largest_gap['gap'] / 2
+        logger.info(f"自動検出された最大ギャップ: {largest_gap['gap']:.1f} "
+                    f"(位置: {largest_gap['position']}, "
+                    f"{largest_gap['before']:.1f} → {largest_gap['after']:.1f})")
+        logger.info(f"設定されたgap_threshold: {gap_threshold:.1f}")
+    else:
+        logger.error("ギャップ計算失敗。データが不足しています")
+        raise ValueError("明るさデータが不足しているため、ギャップを計算できません")
     max_gap = 0
     gap_position = len(sorted_brightness) // 2
     for i in range(1, len(sorted_brightness)):
@@ -108,8 +138,14 @@ def calculate_threshold_methods(brightness_values: List[float]) -> Dict:
             gap_position = i
     if max_gap > gap_threshold:
         methods['bimodal'] = int((sorted_brightness[gap_position-1] + sorted_brightness[gap_position]) / 2)
+        on_count = len(sorted_brightness) - gap_position
+        off_count = gap_position
+        logger.info(f"二峰性検出成功: 閾値={methods['bimodal']}, "
+                    f"最大ギャップ={max_gap:.1f}, "
+                    f"OFF={off_count}台, ON={on_count}台")
     else:
-        methods['bimodal'] = methods['median']
+        methods['bimodal'] = methods['percentile_50']
+        logger.info(f"二峰性未検出: 中央値({methods['percentile_50']})を使用")
     return methods
 
 def plot_all_monitors_histogram(monitor_brightness: Dict, monitors: List[Dict], threshold_methods: Dict, output_path):
@@ -237,7 +273,7 @@ def select_best_threshold(threshold_methods: Dict, brightness_values: List[float
     elif std < 15:
         method = 'few_on'
         threshold = threshold_methods['percentile_75']
-    elif 'bimodal' in threshold_methods and threshold_methods['bimodal'] != threshold_methods['median']:
+    elif 'bimodal' in threshold_methods and threshold_methods['bimodal'] != threshold_methods['percentile_50']:
         method = 'bimodal'
         threshold = threshold_methods['bimodal']
     else:

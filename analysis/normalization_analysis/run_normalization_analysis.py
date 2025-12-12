@@ -98,10 +98,15 @@ from scipy.optimize import curve_fit
 
 def plot_shoulder_width_vs_column_with_fit(csv_path, output_dir):
     """
-    各列ごとにグループごとの四分位中央値を算出し、各列のグループ中央値平均を赤菱で表示（小さめ）。
-    その赤菱を使ってフィット曲線（青）を描画。
-    グループごとの中央値（灰色点）はそのまま表示。
-    使用したcsvファイル情報もoutput_dirに保存（絶対パス）。
+    距離-肩幅関係グラフを生成
+    - 横軸: 列位置 (column_position)
+    - 縦軸: 肩幅 (shoulder_width)
+    - 個人データ: 点
+    - 列平均: 赤い菱形
+    - 最適指数減衰関数: 曲線（青）
+    - 最適直線近似: 直線（緑点線）
+    - パラメータは別々のjsonに保存
+    - 正規化関数コードも別々のpythonファイルに保存
     """
     group_size = 1200
     interval = 40
@@ -161,33 +166,40 @@ def plot_shoulder_width_vs_column_with_fit(csv_path, output_dir):
     xdata = np.array(xdata)
     ydata = np.array(ydata)
 
-    # フィット
+    # --- 近似 ---
+    # 指数減衰関数
     def exp_decay(x, a, b, c):
         return a * np.exp(-b * x) + c
 
-    fit_params = None
+    fit_params_exp = None
+    fit_params_lin = None
     try:
-        popt, pcov = curve_fit(exp_decay, xdata, ydata, p0=(ydata.max(), 0.1, ydata.min()))
-        fit_params = popt
+        popt_exp, pcov_exp = curve_fit(exp_decay, xdata, ydata, p0=(ydata.max(), 0.1, ydata.min()))
+        fit_params_exp = popt_exp
         x_fit = np.linspace(xdata.min(), xdata.max(), 100)
-        y_fit = exp_decay(x_fit, *popt)
-        plt.plot(x_fit, y_fit, color='blue', linewidth=2, label='フィット曲線')
+        y_fit_exp = exp_decay(x_fit, *popt_exp)
+        plt.plot(x_fit, y_fit_exp, color='blue', linewidth=2, label='指数減衰フィット（青）')
     except Exception as e:
         print(f"指数減衰フィット失敗: {e}")
 
+    try:
+        popt_lin = np.polyfit(xdata, ydata, 1)
+        a_lin, b_lin = popt_lin
+        fit_params_lin = (a_lin, b_lin, 0)
+        y_fit_lin = a_lin * x_fit + b_lin
+        plt.plot(x_fit, y_fit_lin, color='green', linestyle='dashed', linewidth=2, label='直線フィット（緑点線）')
+    except Exception as e:
+        print(f"直線フィット失敗: {e}")
+
     plt.xlabel('列位置 (column_position)', fontsize=13)
     plt.ylabel('肩幅 (px)', fontsize=13)
-    plt.title('距離-肩幅関係（列ごと中央値平均・フィット）', fontsize=15)
+    plt.title('距離-肩幅関係（指数・直線フィット）', fontsize=15)
     plt.legend()
     plt.grid(True, alpha=0.3)
 
-    # --- ここから軸の調整 ---
-    # 縦軸のメモリ拡充
     ymin = min([min(medians) for medians in col_group_medians.values() if medians]) if col_group_medians else 0
     ymax = max([max(medians) for medians in col_group_medians.values() if medians]) if col_group_medians else 100
-    plt.ylim(ymin - 20, ymax + 40)  # 余裕を持たせて拡充
-
-    # 横軸は整数のみ表示
+    plt.ylim(ymin - 20, ymax + 40)
     plt.xticks([int(c) for c in columns])
 
     output_path = os.path.join(output_dir, "shoulder_width_vs_column_fit.png")
@@ -196,7 +208,6 @@ def plot_shoulder_width_vs_column_with_fit(csv_path, output_dir):
     plt.close()
     print(f"✅ 距離-肩幅関係グラフを {output_path} に保存しました")
 
-    # 使用したcsvファイル情報を絶対パスで保存
     info_path = os.path.join(output_dir, "analysis_info.txt")
     with open(info_path, "w", encoding="utf-8-sig") as f:
         f.write(f"分析日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -206,44 +217,75 @@ def plot_shoulder_width_vs_column_with_fit(csv_path, output_dir):
         f.write(f"抽出間隔フレーム数: {interval}\n")
     print(f"✅ 分析情報を {info_path} に保存しました")
 
-    # 関数パラメータ保存
-    if fit_params is not None:
-        params_dict = {
-            "function": "exponential_decay",
-            "parameters": {
-                "a": fit_params[0],
-                "b": fit_params[1],
-                "c": fit_params[2]
-            },
+    # --- パラメータ保存（jsonを分ける） ---
+    if fit_params_exp is not None:
+        params_exp = {
+            "a": fit_params_exp[0],
+            "b": fit_params_exp[1],
+            "c": fit_params_exp[2],
             "formula": "f(x) = a * exp(-b * x) + c"
         }
-        with open(os.path.join(output_dir, "function_parameters.json"), "w", encoding="utf-8-sig") as f:
-            json.dump(params_dict, f, ensure_ascii=False, indent=2)
-        print(f"✅ 関数パラメータを function_parameters.json に保存しました")
+        with open(os.path.join(output_dir, "function_parameters_exp.json"), "w", encoding="utf-8-sig") as f:
+            json.dump(params_exp, f, ensure_ascii=False, indent=2)
+        print(f"✅ 指数減衰パラメータを function_parameters_exp.json に保存しました")
 
-        # 正規化関数コード生成
-        normalization_code = f"""# 距離正規化関数（自動生成）
+    if fit_params_lin is not None:
+        params_lin = {
+            "a": fit_params_lin[0],
+            "b": fit_params_lin[1],
+            "c": fit_params_lin[2],
+            "formula": "f(x) = a * x + b + c"
+        }
+        with open(os.path.join(output_dir, "function_parameters_linear.json"), "w", encoding="utf-8-sig") as f:
+            json.dump(params_lin, f, ensure_ascii=False, indent=2)
+        print(f"✅ 直線パラメータを function_parameters_linear.json に保存しました")
+
+    # --- 正規化関数コードも分けて保存 ---
+    if fit_params_exp is not None:
+        normalization_code_exp = f"""# 距離正規化関数（指数減衰）
 import numpy as np
 
-def distance_normalization_function(column_position):
+def distance_normalization_function_exp(column_position):
     \"\"\"
     指数減衰関数による肩幅予測
-    f(x) = {fit_params[0]:.6f} * exp(-{fit_params[1]:.6f} * x) + {fit_params[2]:.6f}
+    f(x) = {fit_params_exp[0]:.6f} * exp(-{fit_params_exp[1]:.6f} * x) + {fit_params_exp[2]:.6f}
     \"\"\"
-    return {fit_params[0]:.6f} * np.exp(-{fit_params[1]:.6f} * column_position) + {fit_params[2]:.6f}
+    return {fit_params_exp[0]:.6f} * np.exp(-{fit_params_exp[1]:.6f} * column_position) + {fit_params_exp[2]:.6f}
 
-def normalize_shoulder_width(measured_width, column_position, reference_column=1):
+def normalize_shoulder_width_exp(measured_width, column_position, reference_column=1):
     \"\"\"
-    実測肩幅を基準列で正規化
+    実測肩幅を基準列で正規化（指数減衰）
     \"\"\"
-    predicted_width = distance_normalization_function(column_position)
-    reference_width = distance_normalization_function(reference_column)
+    predicted_width = distance_normalization_function_exp(column_position)
+    reference_width = distance_normalization_function_exp(reference_column)
     normalization_factor = reference_width / predicted_width
     return measured_width * normalization_factor
 """
-        with open(os.path.join(output_dir, "normalization_function.py"), "w", encoding="utf-8-sig") as f:
-            f.write(normalization_code)
-        print(f"✅ 正規化関数コードを normalization_function.py に保存しました")
+        with open(os.path.join(output_dir, "normalization_function_exp.py"), "w", encoding="utf-8-sig") as f:
+            f.write(normalization_code_exp)
+        print(f"✅ 正規化関数コード（指数）を normalization_function_exp.py に保存しました")
+
+    if fit_params_lin is not None:
+        normalization_code_lin = f"""# 距離正規化関数（直線近似）
+def distance_normalization_function_linear(column_position):
+    \"\"\"
+    直線近似による肩幅予測
+    f(x) = {fit_params_lin[0]:.6f} * x + {fit_params_lin[1]:.6f} + {fit_params_lin[2]:.6f}
+    \"\"\"
+    return {fit_params_lin[0]:.6f} * column_position + {fit_params_lin[1]:.6f} + {fit_params_lin[2]:.6f}
+
+def normalize_shoulder_width_linear(measured_width, column_position, reference_column=1):
+    \"\"\"
+    実測肩幅を基準列で正規化（直線近似）
+    \"\"\"
+    predicted_width = distance_normalization_function_linear(column_position)
+    reference_width = distance_normalization_function_linear(reference_column)
+    normalization_factor = reference_width / predicted_width
+    return measured_width * normalization_factor
+"""
+        with open(os.path.join(output_dir, "normalization_function_linear.py"), "w", encoding="utf-8-sig") as f:
+            f.write(normalization_code_lin)
+        print(f"✅ 正規化関数コード（直線）を normalization_function_linear.py に保存しました")
 
 # ...existing code...
 
