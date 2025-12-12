@@ -26,6 +26,7 @@ from datetime import datetime  # 🔧 追加
 import traceback
 import platform
 from utils.camera_calibration import undistort_with_json
+import numpy as np
 
 # 🔧 条件付きインポート - 必須ライブラリ
 try:
@@ -2886,32 +2887,27 @@ def main():
     # --- ここから正規化処理の分岐を追加 ---
     print("正規化処理を使いますか？(y/n): ", end="")
     use_normalization = input().strip().lower() == "y"
-    normalization_params = None
+    normalization_params = {}
     normalization_input_csv = None
 
     if use_normalization:
-        print("正規化元CSVファイルがあるフォルダを指定してください: ", end="")
-        csv_dir = input().strip()
-        csv_path = os.path.join(csv_dir, "6point_metrics_with_column.csv")
-        if os.path.exists(csv_path):
-            normalization_input_csv = csv_path
-        else:
-            print("❌ 6point_metrics_with_column.csvが見つかりません。正規化処理をスキップします。")
+        print("パラメータjson（linear/exp）があるフォルダを指定してください: ", end="")
+        json_dir = input().strip()
+        linear_json = os.path.join(json_dir, "function_parameters_linear.json")
+        exp_json = os.path.join(json_dir, "function_parameters_exp.json")
+        if os.path.exists(linear_json):
+            normalization_params["linear"] = linear_json
+        if os.path.exists(exp_json):
+            normalization_params["exp"] = exp_json
+        if not normalization_params:
+            print("❌ function_parameters_linear.json/function_parameters_exp.jsonが見つかりません。正規化処理をスキップします。")
             use_normalization = False
 
-        print("function_parameters.jsonがあるフォルダを指定してください: ", end="")
-        json_dir = input().strip()
-        json_path = os.path.join(json_dir, "function_parameters.json")
-        if os.path.exists(json_path):
-            from analysis.normalization_preparation import load_exponential_params, normalize_value_by_decay
-            a, b, c = load_exponential_params(json_dir)
-            if a is not None and b is not None and c is not None:
-                normalization_params = (a, b, c)
-            else:
-                print("❌ パラメータ取得に失敗。正規化処理をスキップします。")
-                use_normalization = False
-        else:
-            print("❌ function_parameters.jsonが見つかりません。正規化処理をスキップします。")
+        # ★ ここで元CSVファイルのパスも聞く
+        print("正規化対象の6点メトリクスCSVファイル（例: 6point_metrics_with_column.csv）のパスを指定してください: ", end="")
+        normalization_input_csv = input().strip()
+        if not os.path.exists(normalization_input_csv):
+            print(f"❌ 指定されたCSVが見つかりません: {normalization_input_csv}")
             use_normalization = False
 
     # ログレベル設定
@@ -3104,63 +3100,52 @@ def main():
                 json.dump(result, f, indent=2, ensure_ascii=False)
             logger.info(f"📄 サマリー保存: {summary_file}")
 
-            # --- 正規化処理を動画推論せず既存CSVから実行 ---
-            if use_normalization and normalization_params and normalization_input_csv:
+            # --- 正規化のみ実行する場合 ---
+            if use_normalization and normalization_input_csv:
                 import pandas as pd
                 df = pd.read_csv(normalization_input_csv)
-                a, b, c = normalization_params
-                from analysis.normalization_preparation import normalize_value_by_decay
 
-                # 列番号が割り振られていない行は除外
-                df_valid = df[df["column_position"].notnull()].copy()
+                output_dir = os.path.dirname(normalization_input_csv)
 
-                # 肩幅の正規化
-                if "shoulder_width" in df_valid.columns and "column_position" in df_valid.columns:
-                    df_valid["shoulder_width_normalized"] = df_valid.apply(
-                        lambda row: normalize_value_by_decay(
-                            row["shoulder_width"],
-                            row["column_position"],
-                            a, b, c,
-                            reference_distance=1
-                        ),
-                        axis=1
-                    )
-                # 両耳幅の正規化
-                if ("left_ear_x" in df_valid.columns and "right_ear_x" in df_valid.columns and
-                    "left_ear_y" in df_valid.columns and "right_ear_y" in df_valid.columns and
-                    "column_position" in df_valid.columns):
-                    df_valid["ear_width"] = ((df_valid["left_ear_x"] - df_valid["right_ear_x"])**2 + (df_valid["left_ear_y"] - df_valid["right_ear_y"])**2)**0.5
-                    df_valid["ear_width_normalized"] = df_valid.apply(
-                        lambda row: normalize_value_by_decay(
-                            row["ear_width"],
-                            row["column_position"],
-                            a, b, c,
-                            reference_distance=1
-                        ),
-                        axis=1
-                    )
-                # 両肩中点〜両耳中点の距離の正規化
-                if ("shoulder_mid_x" in df_valid.columns and "shoulder_mid_y" in df_valid.columns and
-                    "head_center_x" in df_valid.columns and "head_center_y" in df_valid.columns and
-                    "column_position" in df_valid.columns):
-                    df_valid["shoulder_head_dist"] = ((df_valid["shoulder_mid_x"] - df_valid["head_center_x"])**2 + (df_valid["shoulder_mid_y"] - df_valid["head_center_y"])**2)**0.5
-                    df_valid["shoulder_head_dist_normalized"] = df_valid.apply(
-                        lambda row: normalize_value_by_decay(
-                            row["shoulder_head_dist"],
-                            row["column_position"],
-                            a, b, c,
-                            reference_distance=1
-                        ),
-                        axis=1
-                    )
-                # 角度の正規化は削除（そのまま値を使う）
-                out_csv = os.path.join(str(output_dir), "6point_metrics_normalized.csv")
-                df_valid.to_csv(out_csv, index=False, encoding="utf-8-sig")
-                logger.info(f"✅ 正規化済みCSVを保存しました: {out_csv}")
-            else:
-                logger.warning("❌ 必要な列（shoulder_head_angle, column_position）がCSVに存在しません。")
+                # 直線近似
+                if "linear" in normalization_params:
+                    from analysis.normalization_preparation import load_linear_params, normalize_value_by_linear
+                    a_l, b_l, c_l = load_linear_params(os.path.dirname(normalization_params["linear"]))
+                    df_linear = df[df["column_position"].notnull()].copy()
+                    if "shoulder_width" in df_linear.columns and "column_position" in df_linear.columns:
+                        df_linear["shoulder_width_normalized_linear"] = df_linear.apply(
+                            lambda row: normalize_value_by_linear(
+                                row["shoulder_width"],
+                                row["column_position"],
+                                a_l, b_l, c_l,
+                                reference_distance=1
+                            ),
+                            axis=1
+                        )
+                    out_csv_linear = os.path.join(output_dir, "6point_metrics_normalized_linear.csv")
+                    df_linear.to_csv(out_csv_linear, index=False, encoding="utf-8-sig")
+                    print(f"✅ 直線近似で正規化済みCSVを保存しました: {out_csv_linear}")
 
-            return 0
+                # 指数近似
+                if "exp" in normalization_params:
+                    from analysis.normalization_preparation import load_exponential_params, normalize_value_by_decay
+                    a_e, b_e, c_e = load_exponential_params(os.path.dirname(normalization_params["exp"]))
+                    df_exp = df[df["column_position"].notnull()].copy()
+                    if "shoulder_width" in df_exp.columns and "column_position" in df_exp.columns:
+                        df_exp["shoulder_width_normalized_exp"] = df_exp.apply(
+                            lambda row: normalize_value_by_decay(
+                                row["shoulder_width"],
+                                row["column_position"],
+                                a_e, b_e, c_e,
+                                reference_distance=1
+                            ),
+                            axis=1
+                        )
+                    out_csv_exp = os.path.join(output_dir, "6point_metrics_normalized_exp.csv")
+                    df_exp.to_csv(out_csv_exp, index=False, encoding="utf-8-sig")
+                    print(f"✅ 指数近似で正規化済みCSVを保存しました: {out_csv_exp}")
+
+                return 0
 
         except Exception as e:
             logger.error(f"❌ 分析処理中にエラーが発生: {e}")
