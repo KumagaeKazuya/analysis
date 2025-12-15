@@ -3101,17 +3101,27 @@ def main():
             logger.info(f"📄 サマリー保存: {summary_file}")
 
             # --- 正規化のみ実行する場合 ---
+            # --- 正規化のみ実行する場合 ---
             if use_normalization and normalization_input_csv:
                 import pandas as pd
+                import numpy as np
                 df = pd.read_csv(normalization_input_csv)
 
                 output_dir = os.path.dirname(normalization_input_csv)
+
+                # 両耳間距離の計算
+                def calc_ear_distance(row):
+                    if all(k in row and not pd.isnull(row[k]) for k in ["left_ear_x", "right_ear_x", "left_ear_y", "right_ear_y"]):
+                        return np.sqrt((row["left_ear_x"] - row["right_ear_x"])**2 + (row["left_ear_y"] - row["right_ear_y"])**2)
+                    return np.nan
 
                 # 直線近似
                 if "linear" in normalization_params:
                     from analysis.normalization_preparation import load_linear_params, normalize_value_by_linear
                     a_l, b_l, c_l = load_linear_params(os.path.dirname(normalization_params["linear"]))
                     df_linear = df[df["column_position"].notnull()].copy()
+
+                    # 肩幅正規化
                     if "shoulder_width" in df_linear.columns and "column_position" in df_linear.columns:
                         df_linear["shoulder_width_normalized_linear"] = df_linear.apply(
                             lambda row: normalize_value_by_linear(
@@ -3122,6 +3132,53 @@ def main():
                             ),
                             axis=1
                         )
+
+                    # 両耳間距離・正規化
+                    df_linear["ear_distance"] = df_linear.apply(calc_ear_distance, axis=1)
+                    df_linear["ear_distance_normalized_linear"] = df_linear.apply(
+                        lambda row: normalize_value_by_linear(
+                            row["ear_distance"],
+                            row["column_position"],
+                            a_l, b_l, c_l,
+                            reference_distance=1
+                        ) if not pd.isnull(row["ear_distance"]) else np.nan,
+                        axis=1
+                    )
+
+                    # 肩幅・両耳間距離の正規化後座標
+                    def normalize_pair(x1, x2, y1, y2, width, width_norm):
+                        # 中点を基準にスケーリング
+                        if any(pd.isnull([x1, x2, y1, y2, width, width_norm])) or width == 0:
+                            return (np.nan, np.nan, np.nan, np.nan)
+                        cx = (x1 + x2) / 2
+                        cy = (y1 + y2) / 2
+                        scale = width_norm / width
+                        nx1 = (x1 - cx) * scale + cx
+                        nx2 = (x2 - cx) * scale + cx
+                        ny1 = (y1 - cy) * scale + cy
+                        ny2 = (y2 - cy) * scale + cy
+                        return (nx1, nx2, ny1, ny2)
+
+                    # 肩幅正規化後の両肩座標
+                    df_linear[["left_shoulder_x_normalized_linear", "right_shoulder_x_normalized_linear",
+                               "left_shoulder_y_normalized_linear", "right_shoulder_y_normalized_linear"]] = df_linear.apply(
+                        lambda row: normalize_pair(
+                            row["left_shoulder_x"], row["right_shoulder_x"],
+                            row["left_shoulder_y"], row["right_shoulder_y"],
+                            row["shoulder_width"], row["shoulder_width_normalized_linear"]
+                        ), axis=1, result_type="expand"
+                    )
+
+                    # 両耳間距離正規化後の両耳座標
+                    df_linear[["left_ear_x_normalized_linear", "right_ear_x_normalized_linear",
+                               "left_ear_y_normalized_linear", "right_ear_y_normalized_linear"]] = df_linear.apply(
+                        lambda row: normalize_pair(
+                            row["left_ear_x"], row["right_ear_x"],
+                            row["left_ear_y"], row["right_ear_y"],
+                            row["ear_distance"], row["ear_distance_normalized_linear"]
+                        ), axis=1, result_type="expand"
+                    )
+
                     out_csv_linear = os.path.join(output_dir, "6point_metrics_normalized_linear.csv")
                     df_linear.to_csv(out_csv_linear, index=False, encoding="utf-8-sig")
                     print(f"✅ 直線近似で正規化済みCSVを保存しました: {out_csv_linear}")
@@ -3131,6 +3188,8 @@ def main():
                     from analysis.normalization_preparation import load_exponential_params, normalize_value_by_decay
                     a_e, b_e, c_e = load_exponential_params(os.path.dirname(normalization_params["exp"]))
                     df_exp = df[df["column_position"].notnull()].copy()
+
+                    # 肩幅正規化
                     if "shoulder_width" in df_exp.columns and "column_position" in df_exp.columns:
                         df_exp["shoulder_width_normalized_exp"] = df_exp.apply(
                             lambda row: normalize_value_by_decay(
@@ -3141,6 +3200,52 @@ def main():
                             ),
                             axis=1
                         )
+
+                    # 両耳間距離・正規化
+                    df_exp["ear_distance"] = df_exp.apply(calc_ear_distance, axis=1)
+                    df_exp["ear_distance_normalized_exp"] = df_exp.apply(
+                        lambda row: normalize_value_by_decay(
+                            row["ear_distance"],
+                            row["column_position"],
+                            a_e, b_e, c_e,
+                            reference_distance=1
+                        ) if not pd.isnull(row["ear_distance"]) else np.nan,
+                        axis=1
+                    )
+
+                    # 肩幅・両耳間距離の正規化後座標
+                    def normalize_pair_exp(x1, x2, y1, y2, width, width_norm):
+                        if any(pd.isnull([x1, x2, y1, y2, width, width_norm])) or width == 0:
+                            return (np.nan, np.nan, np.nan, np.nan)
+                        cx = (x1 + x2) / 2
+                        cy = (y1 + y2) / 2
+                        scale = width_norm / width
+                        nx1 = (x1 - cx) * scale + cx
+                        nx2 = (x2 - cx) * scale + cx
+                        ny1 = (y1 - cy) * scale + cy
+                        ny2 = (y2 - cy) * scale + cy
+                        return (nx1, nx2, ny1, ny2)
+
+                    # 肩幅正規化後の両肩座標
+                    df_exp[["left_shoulder_x_normalized_exp", "right_shoulder_x_normalized_exp",
+                            "left_shoulder_y_normalized_exp", "right_shoulder_y_normalized_exp"]] = df_exp.apply(
+                        lambda row: normalize_pair_exp(
+                            row["left_shoulder_x"], row["right_shoulder_x"],
+                            row["left_shoulder_y"], row["right_shoulder_y"],
+                            row["shoulder_width"], row["shoulder_width_normalized_exp"]
+                        ), axis=1, result_type="expand"
+                    )
+
+                    # 両耳間距離正規化後の両耳座標
+                    df_exp[["left_ear_x_normalized_exp", "right_ear_x_normalized_exp",
+                            "left_ear_y_normalized_exp", "right_ear_y_normalized_exp"]] = df_exp.apply(
+                        lambda row: normalize_pair_exp(
+                            row["left_ear_x"], row["right_ear_x"],
+                            row["left_ear_y"], row["right_ear_y"],
+                            row["ear_distance"], row["ear_distance_normalized_exp"]
+                        ), axis=1, result_type="expand"
+                    )
+
                     out_csv_exp = os.path.join(output_dir, "6point_metrics_normalized_exp.csv")
                     df_exp.to_csv(out_csv_exp, index=False, encoding="utf-8-sig")
                     print(f"✅ 指数近似で正規化済みCSVを保存しました: {out_csv_exp}")

@@ -289,6 +289,74 @@ def normalize_shoulder_width_linear(measured_width, column_position, reference_c
 
 # ...existing code...
 
+def calc_and_save_mse(csv_path, output_dir):
+    """
+    直線近似・指数近似のMSEを計算し、output_dirに保存（IQR外れ値除去後も出力）
+    """
+    import pandas as pd
+    import numpy as np
+    import json
+    import os
+
+    # パラメータファイルパス
+    linear_param_path = os.path.join(output_dir, "function_parameters_linear.json")
+    exp_param_path = os.path.join(output_dir, "function_parameters_exp.json")
+    if not (os.path.exists(linear_param_path) and os.path.exists(exp_param_path)):
+        print("⚠️ パラメータファイルが見つかりません。MSE計算をスキップします。")
+        return
+
+    df = pd.read_csv(csv_path, encoding="utf-8-sig")
+    df = df[df['column_position'].notnull()]
+    df = df[df['shoulder_width'].notnull()]
+
+    with open(linear_param_path, encoding="utf-8-sig") as f:
+        linear_params = json.load(f)
+    with open(exp_param_path, encoding="utf-8-sig") as f:
+        exp_params = json.load(f)
+
+    def linear_func(x, a, b, c):
+        return a * x + b + c
+
+    def exp_func(x, a, b, c):
+        return a * np.exp(-b * x) + c
+
+    a_lin = linear_params["a"]
+    b_lin = linear_params["b"]
+    c_lin = linear_params["c"]
+    a_exp = exp_params["a"]
+    b_exp = exp_params["b"]
+    c_exp = exp_params["c"]
+
+    # --- 全データでMSE ---
+    df["shoulder_pred_linear"] = df["column_position"].apply(lambda x: linear_func(x, a_lin, b_lin, c_lin))
+    df["shoulder_pred_exp"] = df["column_position"].apply(lambda x: exp_func(x, a_exp, b_exp, c_exp))
+    mse_linear = np.mean((df["shoulder_width"] - df["shoulder_pred_linear"]) ** 2)
+    mse_exp = np.mean((df["shoulder_width"] - df["shoulder_pred_exp"]) ** 2)
+
+    # --- IQR外れ値除去 ---
+    iqr_mask = np.zeros(len(df), dtype=bool)
+    for col in df['column_position'].unique():
+        col_df = df[df['column_position'] == col]
+        q1 = col_df['shoulder_width'].quantile(0.25)
+        q3 = col_df['shoulder_width'].quantile(0.75)
+        mask = (df['column_position'] == col) & (df['shoulder_width'] >= q1) & (df['shoulder_width'] <= q3)
+        iqr_mask |= mask
+    df_iqr = df[iqr_mask]
+
+    mse_linear_iqr = np.mean((df_iqr["shoulder_width"] - df_iqr["shoulder_pred_linear"]) ** 2)
+    mse_exp_iqr = np.mean((df_iqr["shoulder_width"] - df_iqr["shoulder_pred_exp"]) ** 2)
+
+    result_text = (
+        f"直線近似のMSE: {mse_linear:.3f}\n"
+        f"指数近似のMSE: {mse_exp:.3f}\n"
+        f"【IQR外れ値除去後】\n"
+        f"直線近似のMSE: {mse_linear_iqr:.3f}\n"
+        f"指数近似のMSE: {mse_exp_iqr:.3f}\n"
+    )
+    print(result_text)
+    with open(os.path.join(output_dir, "mse_result.txt"), "w", encoding="utf-8-sig") as f:
+        f.write(result_text)
+
 def plot_shoulder_width_vs_column_with_fit_iqr(csv_path, output_dir):
     """
     距離-肩幅関係グラフ（IQR外れ値除去版）を生成
@@ -511,7 +579,9 @@ def analyze_one_command(args) -> int:
             print(f"\n🎉 分析成功!")
             print(f"📁 結果フォルダ: {result['analysis_info']['output_dir']}")
             plot_shoulder_width_vs_column_with_fit(args.csv_path, output_dir)
-            plot_shoulder_width_vs_column_with_fit_iqr(args.csv_path, output_dir)  # ←追加
+            # --- ここでMSE計算 ---
+            calc_and_save_mse(args.csv_path, output_dir)
+            plot_shoulder_width_vs_column_with_fit_iqr(args.csv_path, output_dir)
             plot_angle_boxplot_by_column(args.csv_path, output_dir)
             return 0
         else:
@@ -535,7 +605,9 @@ def analyze_all_command(args) -> int:
         print(f"   📋 列構成: {column_assignments}")
         print(f"   📂 出力先: {output_dir}")
         plot_shoulder_width_vs_column_with_fit(args.csv_path, output_dir)
-        plot_shoulder_width_vs_column_with_fit_iqr(args.csv_path, output_dir)  # ←追加
+        # --- ここでMSE計算 ---
+        calc_and_save_mse(args.csv_path, output_dir)
+        plot_shoulder_width_vs_column_with_fit_iqr(args.csv_path, output_dir)
         plot_angle_boxplot_by_column(args.csv_path, output_dir)
         return 0
     except Exception as e:
