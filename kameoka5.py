@@ -165,9 +165,32 @@ class MonitorDetectionSystem:
         return {'mean_brightness': mean_brightness}
 
     def judge_power_state(self, monitor: MonitorInfo) -> Tuple[bool, float]:
+        """
+        永続モードON時でも「閾値以下が10秒間続いたらOFFに戻す」ロジックを追加した完全版
+        """
+        # 10秒間のフレーム数（fps=30想定。必要ならfpsをクラス変数で受け取ってください）
+        off_duration_seconds = 10
+        fps = 20  # 必要に応じてself.fpsなどで渡す
+        off_threshold_frames = int(off_duration_seconds * fps)
+
+        # 閾値以下判定：輝度が閾値以下の状態が続いた場合
+        if not hasattr(monitor, "below_threshold_frame_count"):
+            monitor.below_threshold_frame_count = 0  # 動的に属性追加
+
+        if monitor.mean_brightness <= self.threshold:
+            monitor.below_threshold_frame_count += 1
+        else:
+            monitor.below_threshold_frame_count = 0
+
+        # 閾値以下が10秒間続いたら、永続モードでもOFFに
+        if monitor.below_threshold_frame_count >= off_threshold_frames:
+            monitor.ever_powered_on = False  # 永続フラグもリセット
+            return False, 1.0
+
         # 永続モードが有効で、一度でもONになっていたら常にON
         if self.power_config.get("persistent_mode", False) and monitor.ever_powered_on:
             return True, 1.0
+
         is_on = monitor.mean_brightness > self.threshold
         distance = abs(monitor.mean_brightness - self.threshold)
         confidence = min(distance / self.power_config["confidence_distance"], 1.0)

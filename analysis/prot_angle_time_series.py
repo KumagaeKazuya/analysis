@@ -2,78 +2,77 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import os
 from datetime import datetime
-import re
-import sys
 import numpy as np
 
 import matplotlib
 matplotlib.rc('font', family='AppleGothic')  # Macの場合
 
-if len(sys.argv) < 2:
-    print("使い方: python prot_angle_time_series.py <CSVファイルパス>")
-    sys.exit(1)
+# --- 対話形式で2つのCSVを指定 ---
+print("正規化後のCSVファイルパスを入力してください（例: 6point_metrics_normalized_linear.csv）:")
+normalized_csv_path = input().strip()
+print("肩幅固定後の代表値CSVファイルパスを入力してください（例: all_persons.csv）:")
+fixed_csv_path = input().strip()
 
-csv_path = sys.argv[1]
-df = pd.read_csv(csv_path)
+# --- CSV読み込み ---
+df_norm = pd.read_csv(normalized_csv_path)
+df_fixed = pd.read_csv(fixed_csv_path)
 
-def extract_frame_number(frame_name):
-    match = re.search(r'frame[_\-]?(\d+)', str(frame_name))
-    return int(match.group(1)) if match else None
+# --- 肩幅固定CSVからperson_idごとに肩幅正規化後の肩座標を抽出（代表値フレームのもの） ---
+shoulder_cols = [
+    "person_id",
+    "left_shoulder_x_normalized_exp", "left_shoulder_y_normalized_exp",
+    "right_shoulder_x_normalized_exp", "right_shoulder_y_normalized_exp"
+]
+shoulder_fixed = df_fixed[shoulder_cols].drop_duplicates("person_id").set_index("person_id")
 
-df['frame_number'] = df['frame'].apply(extract_frame_number)
+# --- 正規化後CSVから両耳座標とframeを抽出 ---
+ear_cols = [
+    "person_id", "frame",
+    "left_ear_x_normalized_exp", "left_ear_y_normalized_exp",
+    "right_ear_x_normalized_exp", "right_ear_y_normalized_exp"
+]
+ears_norm = df_norm[ear_cols]
 
-# --- 肩幅を個人ごとに全フレーム平均の固定値にする ---
-if not all(col in df.columns for col in [
-    'shoulder_width', 'person_id',
-    'left_shoulder_x', 'left_shoulder_y', 'right_shoulder_x', 'right_shoulder_y',
-    'left_ear_x', 'left_ear_y', 'right_ear_x', 'right_ear_y'
-]):
-    print("❌ 必要なカラム（shoulder_width, person_id, 両肩・両耳座標）がありません")
-    sys.exit(1)
+# --- 肩座標を全時系列にマージ（person_idで結合） ---
+df = ears_norm.merge(shoulder_fixed, left_on="person_id", right_index=True, how="left")
 
-shoulder_width_dict = df.groupby('person_id')['shoulder_width'].mean().to_dict()
-
-def calc_angle_by_fixed_shoulder(row):
-    pid = row['person_id']
-    # 固定肩幅
-    shoulder_width = shoulder_width_dict.get(pid, np.nan)
-    # 肩の中心座標
-    lx, ly = row['left_shoulder_x'], row['left_shoulder_y']
-    rx, ry = row['right_shoulder_x'], row['right_shoulder_y']
-    center_x = (lx + rx) / 2
-    center_y = (ly + ry) / 2
-
-    # 固定肩幅から両肩の中点座標を決定（中心座標はそのまま、肩ベクトルは水平方向に肩幅分）
-    shoulder_mid = np.array([center_x, center_y])
-    shoulder_vec = np.array([shoulder_width, 0])  # 水平方向に肩幅分
-
-    # 両耳の中点座標（フレームごとに変動）
-    le_x, le_y = row['left_ear_x'], row['left_ear_y']
-    re_x, re_y = row['right_ear_x'], row['right_ear_y']
-    ear_mid = np.array([(le_x + re_x) / 2, (le_y + re_y) / 2])
-
-    # 肩中点→耳中点ベクトル
-    mid_vec = ear_mid - shoulder_mid
-
-    # なす角計算
-    dot = np.dot(shoulder_vec, mid_vec)
-    norm_shoulder = np.linalg.norm(shoulder_vec)
-    norm_mid = np.linalg.norm(mid_vec)
-    if norm_shoulder == 0 or norm_mid == 0:
+# --- なす角計算 ---
+def calc_shoulder_ear_angle(row):
+    # 固定肩座標（肩幅正規化後）
+    lsh_x = row["left_shoulder_x_normalized_exp"]
+    lsh_y = row["left_shoulder_y_normalized_exp"]
+    rsh_x = row["right_shoulder_x_normalized_exp"]
+    rsh_y = row["right_shoulder_y_normalized_exp"]
+    # 時系列ごとの耳座標（正規化後）
+    lea_x = row["left_ear_x_normalized_exp"]
+    lea_y = row["left_ear_y_normalized_exp"]
+    rea_x = row["right_ear_x_normalized_exp"]
+    rea_y = row["right_ear_y_normalized_exp"]
+    try:
+        # 肩中点
+        shoulder_cx = (lsh_x + rsh_x) / 2
+        shoulder_cy = (lsh_y + rsh_y) / 2
+        # 肩幅固定ベクトル（右肩→左肩）
+        shoulder_vec = np.array([lsh_x - rsh_x, lsh_y - rsh_y])
+        # 耳中点
+        ear_cx = (lea_x + rea_x) / 2
+        ear_cy = (lea_y + rea_y) / 2
+        # 肩中点→耳中点ベクトル
+        shoulder_to_ear_vec = np.array([ear_cx - shoulder_cx, ear_cy - shoulder_cy])
+        # なす角
+        dot = np.dot(shoulder_vec, shoulder_to_ear_vec)
+        norm1 = np.linalg.norm(shoulder_vec)
+        norm2 = np.linalg.norm(shoulder_to_ear_vec)
+        if norm1 == 0 or norm2 == 0:
+            return np.nan
+        cos_theta = np.clip(dot / (norm1 * norm2), -1, 1)
+        return np.degrees(np.arccos(cos_theta))
+    except Exception:
         return np.nan
-    cos_theta = dot / (norm_shoulder * norm_mid)
-    cos_theta = np.clip(cos_theta, -1, 1)
-    return np.degrees(np.arccos(cos_theta))
 
-df['shoulder_head_angle_fixed_vector'] = df.apply(calc_angle_by_fixed_shoulder, axis=1)
+df['shoulder_ear_angle'] = df.apply(calc_shoulder_ear_angle, axis=1)
 
-# グラフ描画部分の 'shoulder_head_angle_fixed' を 'shoulder_head_angle_fixed_vector' に変更
-# 例:
-# person_df['shoulder_head_angle_fixed'] → person_df['shoulder_head_angle_fixed_vector']
-# mean_df = df.groupby('frame_number')['shoulder_head_angle_fixed'].mean().reset_index()
-# → mean_df = df.groupby('frame_number')['shoulder_head_angle_fixed_vector'].mean().reset_index()
-
-
+# --- グラフ描画UI ---
 print("表示するグラフを選択してください：")
 print("1: 全ID＋時系列平均")
 print("2: 選択ID＋その時系列平均")
@@ -88,13 +87,13 @@ if graph_type == "1":
     plt.figure(figsize=(14, 7))
     for pid in df['person_id'].unique():
         person_df = df[df['person_id'] == pid]
-        plt.scatter(person_df['frame_number'], person_df['shoulder_head_angle_fixed'],
+        plt.scatter(person_df['frame'], person_df['shoulder_ear_angle'],
                     label=f'ID {pid}', s=30, alpha=0.7)
-    mean_df = df.groupby('frame_number')['shoulder_head_angle_fixed'].mean().reset_index()
-    plt.scatter(mean_df['frame_number'], mean_df['shoulder_head_angle_fixed'],
+    mean_df = df.groupby('frame')['shoulder_ear_angle'].mean().reset_index()
+    plt.scatter(mean_df['frame'], mean_df['shoulder_ear_angle'],
                 color='red', marker='D', s=80, label='平均')
-    plt.xlabel('フレーム番号', fontsize=13)
-    plt.ylabel('なす角度（肩幅固定・耳間変動）', fontsize=13)
+    plt.xlabel('フレーム', fontsize=13)
+    plt.ylabel('なす角度（肩幅固定ベクトル×肩中点→耳中点）', fontsize=13)
     plt.title('時系列ごとのなす角度（個人点＋平均）', fontsize=15)
     plt.legend()
     plt.grid(True, alpha=0.3)
@@ -107,13 +106,13 @@ elif graph_type == "2":
     plt.figure(figsize=(14, 7))
     for pid in selected_ids:
         person_df = df[df['person_id'] == pid]
-        plt.scatter(person_df['frame_number'], person_df['shoulder_head_angle_fixed'],
+        plt.scatter(person_df['frame'], person_df['shoulder_ear_angle'],
                     label=f'ID {pid}', s=30, alpha=0.7)
-    multi_mean_df = df[df['person_id'].isin(selected_ids)].groupby('frame_number')['shoulder_head_angle_fixed'].mean().reset_index()
-    plt.scatter(multi_mean_df['frame_number'], multi_mean_df['shoulder_head_angle_fixed'],
+    multi_mean_df = df[df['person_id'].isin(selected_ids)].groupby('frame')['shoulder_ear_angle'].mean().reset_index()
+    plt.scatter(multi_mean_df['frame'], multi_mean_df['shoulder_ear_angle'],
                 color='red', marker='D', s=80, label='選択ID時系列平均')
-    plt.xlabel('フレーム番号', fontsize=13)
-    plt.ylabel('なす角度（肩幅固定・耳間変動）', fontsize=13)
+    plt.xlabel('フレーム', fontsize=13)
+    plt.ylabel('なす角度（肩幅固定ベクトル×肩中点→耳中点）', fontsize=13)
     plt.title(f'選択ID({selected_ids})＋時系列平均', fontsize=15)
     plt.legend()
     plt.grid(True, alpha=0.3)
@@ -125,12 +124,12 @@ elif graph_type == "3":
     single_id = int(single_id_input) if single_id_input.isdigit() else None
     plt.figure(figsize=(14, 7))
     person_df = df[df['person_id'] == single_id]
-    plt.scatter(person_df['frame_number'], person_df['shoulder_head_angle_fixed'],
+    plt.scatter(person_df['frame'], person_df['shoulder_ear_angle'],
                 label=f'ID {single_id}', s=30, alpha=0.7)
-    avg = person_df['shoulder_head_angle_fixed'].mean()
+    avg = person_df['shoulder_ear_angle'].mean()
     plt.axhline(avg, color='red', linestyle='--', linewidth=2, label='全記録平均')
-    plt.xlabel('フレーム番号', fontsize=13)
-    plt.ylabel('なす角度（肩幅固定・耳間変動）', fontsize=13)
+    plt.xlabel('フレーム', fontsize=13)
+    plt.ylabel('なす角度（肩幅固定ベクトル×肩中点→耳中点）', fontsize=13)
     plt.title(f'単一ID({single_id})＋全記録平均', fontsize=15)
     plt.legend()
     plt.grid(True, alpha=0.3)
@@ -149,13 +148,13 @@ elif graph_type == "4":
     # 1枚目：全ID＋時系列平均
     for pid in df['person_id'].unique():
         person_df = df[df['person_id'] == pid]
-        axes[0].scatter(person_df['frame_number'], person_df['shoulder_head_angle_fixed'],
+        axes[0].scatter(person_df['frame'], person_df['shoulder_ear_angle'],
                         label=f'ID {pid}', s=30, alpha=0.7)
-    mean_df = df.groupby('frame_number')['shoulder_head_angle_fixed'].mean().reset_index()
-    axes[0].scatter(mean_df['frame_number'], mean_df['shoulder_head_angle_fixed'],
+    mean_df = df.groupby('frame')['shoulder_ear_angle'].mean().reset_index()
+    axes[0].scatter(mean_df['frame'], mean_df['shoulder_ear_angle'],
                     color='red', marker='D', s=80, label='平均')
-    axes[0].set_xlabel('フレーム番号', fontsize=13)
-    axes[0].set_ylabel('なす角度（肩幅固定・耳間変動）', fontsize=13)
+    axes[0].set_xlabel('フレーム', fontsize=13)
+    axes[0].set_ylabel('なす角度（肩幅固定ベクトル×肩中点→耳中点）', fontsize=13)
     axes[0].set_title('全ID＋時系列平均', fontsize=15)
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
@@ -163,13 +162,13 @@ elif graph_type == "4":
     # 2枚目：選択ID＋その時系列平均
     for pid in selected_ids:
         person_df = df[df['person_id'] == pid]
-        axes[1].scatter(person_df['frame_number'], person_df['shoulder_head_angle_fixed'],
+        axes[1].scatter(person_df['frame'], person_df['shoulder_ear_angle'],
                         label=f'ID {pid}', s=30, alpha=0.7)
-    multi_mean_df = df[df['person_id'].isin(selected_ids)].groupby('frame_number')['shoulder_head_angle_fixed'].mean().reset_index()
-    axes[1].scatter(multi_mean_df['frame_number'], multi_mean_df['shoulder_head_angle_fixed'],
+    multi_mean_df = df[df['person_id'].isin(selected_ids)].groupby('frame')['shoulder_ear_angle'].mean().reset_index()
+    axes[1].scatter(multi_mean_df['frame'], multi_mean_df['shoulder_ear_angle'],
                     color='red', marker='D', s=80, label='選択ID時系列平均')
-    axes[1].set_xlabel('フレーム番号', fontsize=13)
-    axes[1].set_ylabel('なす角度（肩幅固定・耳間変動）', fontsize=13)
+    axes[1].set_xlabel('フレーム', fontsize=13)
+    axes[1].set_ylabel('なす角度（肩幅固定ベクトル×肩中点→耳中点）', fontsize=13)
     axes[1].set_title(f'選択ID({selected_ids})＋時系列平均', fontsize=15)
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
@@ -177,12 +176,12 @@ elif graph_type == "4":
     # 3枚目：単一ID＋全記録平均（水平線）
     if single_id is not None:
         person_df = df[df['person_id'] == single_id]
-        axes[2].scatter(person_df['frame_number'], person_df['shoulder_head_angle_fixed'],
+        axes[2].scatter(person_df['frame'], person_df['shoulder_ear_angle'],
                         label=f'ID {single_id}', s=30, alpha=0.7)
-        avg = person_df['shoulder_head_angle_fixed'].mean()
+        avg = person_df['shoulder_ear_angle'].mean()
         axes[2].axhline(avg, color='red', linestyle='--', linewidth=2, label='全記録平均')
-        axes[2].set_xlabel('フレーム番号', fontsize=13)
-        axes[2].set_ylabel('なす角度（肩幅固定・耳間変動）', fontsize=13)
+        axes[2].set_xlabel('フレーム', fontsize=13)
+        axes[2].set_ylabel('なす角度（肩幅固定ベクトル×肩中点→耳中点）', fontsize=13)
         axes[2].set_title(f'単一ID({single_id})＋全記録平均', fontsize=15)
         axes[2].legend()
         axes[2].grid(True, alpha=0.3)
