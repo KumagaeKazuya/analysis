@@ -2887,7 +2887,8 @@ def main():
     # --- ここから正規化処理の分岐を追加 ---
     print("正規化処理を使いますか？(y/n): ", end="")
     use_normalization = input().strip().lower() == "y"
-    normalization_params = {}
+    normalization_param_path = None
+    normalization_type = None
     normalization_input_csv = None
 
     if use_normalization:
@@ -2895,20 +2896,34 @@ def main():
         json_dir = input().strip()
         linear_json = os.path.join(json_dir, "function_parameters_linear.json")
         exp_json = os.path.join(json_dir, "function_parameters_exp.json")
-        if os.path.exists(linear_json):
-            normalization_params["linear"] = linear_json
-        if os.path.exists(exp_json):
-            normalization_params["exp"] = exp_json
-        if not normalization_params:
+        if os.path.exists(linear_json) and os.path.exists(exp_json):
+            print("どちらのパラメータで正規化しますか？ (linear/exp): ", end="")
+            normalization_type = input().strip().lower()
+            if normalization_type == "linear":
+                normalization_param_path = linear_json
+            elif normalization_type == "exp":
+                normalization_param_path = exp_json
+            else:
+                print("❌ 'linear' か 'exp' を入力してください。正規化処理をスキップします。")
+                use_normalization = False
+        elif os.path.exists(linear_json):
+            normalization_type = "linear"
+            normalization_param_path = linear_json
+            print("直線近似パラメータで正規化します。")
+        elif os.path.exists(exp_json):
+            normalization_type = "exp"
+            normalization_param_path = exp_json
+            print("指数近似パラメータで正規化します。")
+        else:
             print("❌ function_parameters_linear.json/function_parameters_exp.jsonが見つかりません。正規化処理をスキップします。")
             use_normalization = False
 
-        # ★ ここで元CSVファイルのパスも聞く
-        print("正規化対象の6点メトリクスCSVファイル（例: 6point_metrics_with_column.csv）のパスを指定してください: ", end="")
-        normalization_input_csv = input().strip()
-        if not os.path.exists(normalization_input_csv):
-            print(f"❌ 指定されたCSVが見つかりません: {normalization_input_csv}")
-            use_normalization = False
+        if use_normalization:
+            print("正規化対象の6点メトリクスCSVファイル（例: 6point_metrics_with_column.csv）のパスを指定してください: ", end="")
+            normalization_input_csv = input().strip()
+            if not os.path.exists(normalization_input_csv):
+                print(f"❌ 指定されたCSVが見つかりません: {normalization_input_csv}")
+                use_normalization = False
 
     # ログレベル設定
     log_level = getattr(logging, args.log_level.upper())
@@ -3102,11 +3117,10 @@ def main():
 
             # --- 正規化のみ実行する場合 ---
             # --- 正規化のみ実行する場合 ---
-            if use_normalization and normalization_input_csv:
+            if use_normalization and normalization_input_csv and normalization_param_path and normalization_type:
                 import pandas as pd
                 import numpy as np
                 df = pd.read_csv(normalization_input_csv)
-
                 output_dir = os.path.dirname(normalization_input_csv)
 
                 # 両耳間距離の計算
@@ -3115,15 +3129,13 @@ def main():
                         return np.sqrt((row["left_ear_x"] - row["right_ear_x"])**2 + (row["left_ear_y"] - row["right_ear_y"])**2)
                     return np.nan
 
-                # 直線近似
-                if "linear" in normalization_params:
+                if normalization_type == "linear":
                     from analysis.normalization_preparation import load_linear_params, normalize_value_by_linear
-                    a_l, b_l, c_l = load_linear_params(os.path.dirname(normalization_params["linear"]))
-                    df_linear = df[df["column_position"].notnull()].copy()
-
+                    a_l, b_l, c_l = load_linear_params(os.path.dirname(normalization_param_path))
+                    df_norm = df[df["column_position"].notnull()].copy()
                     # 肩幅正規化
-                    if "shoulder_width" in df_linear.columns and "column_position" in df_linear.columns:
-                        df_linear["shoulder_width_normalized_linear"] = df_linear.apply(
+                    if "shoulder_width" in df_norm.columns and "column_position" in df_norm.columns:
+                        df_norm["shoulder_width_normalized_linear"] = df_norm.apply(
                             lambda row: normalize_value_by_linear(
                                 row["shoulder_width"],
                                 row["column_position"],
@@ -3132,10 +3144,9 @@ def main():
                             ),
                             axis=1
                         )
-
                     # 両耳間距離・正規化
-                    df_linear["ear_distance"] = df_linear.apply(calc_ear_distance, axis=1)
-                    df_linear["ear_distance_normalized_linear"] = df_linear.apply(
+                    df_norm["ear_distance"] = df_norm.apply(calc_ear_distance, axis=1)
+                    df_norm["ear_distance_normalized_linear"] = df_norm.apply(
                         lambda row: normalize_value_by_linear(
                             row["ear_distance"],
                             row["column_position"],
@@ -3160,8 +3171,8 @@ def main():
                         return (nx1, nx2, ny1, ny2)
 
                     # 肩幅正規化後の両肩座標
-                    df_linear[["left_shoulder_x_normalized_linear", "right_shoulder_x_normalized_linear",
-                               "left_shoulder_y_normalized_linear", "right_shoulder_y_normalized_linear"]] = df_linear.apply(
+                    df_norm[["left_shoulder_x_normalized_linear", "right_shoulder_x_normalized_linear",
+                             "left_shoulder_y_normalized_linear", "right_shoulder_y_normalized_linear"]] = df_norm.apply(
                         lambda row: normalize_pair(
                             row["left_shoulder_x"], row["right_shoulder_x"],
                             row["left_shoulder_y"], row["right_shoulder_y"],
@@ -3170,8 +3181,8 @@ def main():
                     )
 
                     # 両耳間距離正規化後の両耳座標
-                    df_linear[["left_ear_x_normalized_linear", "right_ear_x_normalized_linear",
-                               "left_ear_y_normalized_linear", "right_ear_y_normalized_linear"]] = df_linear.apply(
+                    df_norm[["left_ear_x_normalized_linear", "right_ear_x_normalized_linear",
+                             "left_ear_y_normalized_linear", "right_ear_y_normalized_linear"]] = df_norm.apply(
                         lambda row: normalize_pair(
                             row["left_ear_x"], row["right_ear_x"],
                             row["left_ear_y"], row["right_ear_y"],
@@ -3179,19 +3190,17 @@ def main():
                         ), axis=1, result_type="expand"
                     )
 
-                    out_csv_linear = os.path.join(output_dir, "6point_metrics_normalized_linear.csv")
-                    df_linear.to_csv(out_csv_linear, index=False, encoding="utf-8-sig")
-                    print(f"✅ 直線近似で正規化済みCSVを保存しました: {out_csv_linear}")
+                    out_csv = os.path.join(output_dir, "6point_metrics_normalized_linear.csv")
+                    df_norm.to_csv(out_csv, index=False, encoding="utf-8-sig")
+                    print(f"✅ 直線近似で正規化済みCSVを保存しました: {out_csv}")
 
-                # 指数近似
-                if "exp" in normalization_params:
+                elif normalization_type == "exp":
                     from analysis.normalization_preparation import load_exponential_params, normalize_value_by_decay
-                    a_e, b_e, c_e = load_exponential_params(os.path.dirname(normalization_params["exp"]))
-                    df_exp = df[df["column_position"].notnull()].copy()
-
+                    a_e, b_e, c_e = load_exponential_params(os.path.dirname(normalization_param_path))
+                    df_norm = df[df["column_position"].notnull()].copy()
                     # 肩幅正規化
-                    if "shoulder_width" in df_exp.columns and "column_position" in df_exp.columns:
-                        df_exp["shoulder_width_normalized_exp"] = df_exp.apply(
+                    if "shoulder_width" in df_norm.columns and "column_position" in df_norm.columns:
+                        df_norm["shoulder_width_normalized_exp"] = df_norm.apply(
                             lambda row: normalize_value_by_decay(
                                 row["shoulder_width"],
                                 row["column_position"],
@@ -3200,10 +3209,9 @@ def main():
                             ),
                             axis=1
                         )
-
                     # 両耳間距離・正規化
-                    df_exp["ear_distance"] = df_exp.apply(calc_ear_distance, axis=1)
-                    df_exp["ear_distance_normalized_exp"] = df_exp.apply(
+                    df_norm["ear_distance"] = df_norm.apply(calc_ear_distance, axis=1)
+                    df_norm["ear_distance_normalized_exp"] = df_norm.apply(
                         lambda row: normalize_value_by_decay(
                             row["ear_distance"],
                             row["column_position"],
@@ -3227,8 +3235,8 @@ def main():
                         return (nx1, nx2, ny1, ny2)
 
                     # 肩幅正規化後の両肩座標
-                    df_exp[["left_shoulder_x_normalized_exp", "right_shoulder_x_normalized_exp",
-                            "left_shoulder_y_normalized_exp", "right_shoulder_y_normalized_exp"]] = df_exp.apply(
+                    df_norm[["left_shoulder_x_normalized_exp", "right_shoulder_x_normalized_exp",
+                             "left_shoulder_y_normalized_exp", "right_shoulder_y_normalized_exp"]] = df_norm.apply(
                         lambda row: normalize_pair_exp(
                             row["left_shoulder_x"], row["right_shoulder_x"],
                             row["left_shoulder_y"], row["right_shoulder_y"],
@@ -3237,8 +3245,8 @@ def main():
                     )
 
                     # 両耳間距離正規化後の両耳座標
-                    df_exp[["left_ear_x_normalized_exp", "right_ear_x_normalized_exp",
-                            "left_ear_y_normalized_exp", "right_ear_y_normalized_exp"]] = df_exp.apply(
+                    df_norm[["left_ear_x_normalized_exp", "right_ear_x_normalized_exp",
+                             "left_ear_y_normalized_exp", "right_ear_y_normalized_exp"]] = df_norm.apply(
                         lambda row: normalize_pair_exp(
                             row["left_ear_x"], row["right_ear_x"],
                             row["left_ear_y"], row["right_ear_y"],
@@ -3246,9 +3254,9 @@ def main():
                         ), axis=1, result_type="expand"
                     )
 
-                    out_csv_exp = os.path.join(output_dir, "6point_metrics_normalized_exp.csv")
-                    df_exp.to_csv(out_csv_exp, index=False, encoding="utf-8-sig")
-                    print(f"✅ 指数近似で正規化済みCSVを保存しました: {out_csv_exp}")
+                    out_csv = os.path.join(output_dir, "6point_metrics_normalized_exp.csv")
+                    df_norm.to_csv(out_csv, index=False, encoding="utf-8-sig")
+                    print(f"✅ 指数近似で正規化済みCSVを保存しました: {out_csv}")
 
                 return 0
 

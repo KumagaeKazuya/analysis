@@ -11,6 +11,7 @@ matplotlib.rcParams['font.family'] = 'Hiragino Sans'
 def main():
     csv_file = input("CSVファイル名を入力してください（例: 6point_metrics.csv）: ")
     df = pd.read_csv(csv_file)
+    frames_dir = input("フレーム画像フォルダを指定してください（例: ./frames）: ")
     id_col = 'person_id'
     frame_col = 'frame'
     left_ear_x_col = 'left_ear_x'
@@ -21,10 +22,22 @@ def main():
     # --- 正規化カラム名の自動判定 ---
     if 'shoulder_width_normalized_linear' in df.columns:
         shoulder_col = 'shoulder_width_normalized_linear'
+        shoulder_x_cols = ['left_shoulder_x_normalized_linear', 'right_shoulder_x_normalized_linear']
+        shoulder_y_cols = ['left_shoulder_y_normalized_linear', 'right_shoulder_y_normalized_linear']
+        ear_x_cols = ['left_ear_x_normalized_linear', 'right_ear_x_normalized_linear']
+        ear_y_cols = ['left_ear_y_normalized_linear', 'right_ear_y_normalized_linear']
     elif 'shoulder_width_normalized_exp' in df.columns:
         shoulder_col = 'shoulder_width_normalized_exp'
+        shoulder_x_cols = ['left_shoulder_x_normalized_exp', 'right_shoulder_x_normalized_exp']
+        shoulder_y_cols = ['left_shoulder_y_normalized_exp', 'right_shoulder_y_normalized_exp']
+        ear_x_cols = ['left_ear_x_normalized_exp', 'right_ear_x_normalized_exp']
+        ear_y_cols = ['left_ear_y_normalized_exp', 'right_ear_y_normalized_exp']
     elif 'shoulder_width' in df.columns:
         shoulder_col = 'shoulder_width'
+        shoulder_x_cols = ['left_shoulder_x', 'right_shoulder_x']
+        shoulder_y_cols = ['left_shoulder_y', 'right_shoulder_y']
+        ear_x_cols = ['left_ear_x', 'right_ear_x']
+        ear_y_cols = ['left_ear_y', 'right_ear_y']
     else:
         raise ValueError("正規化肩幅カラムが見つかりません")
 
@@ -40,11 +53,22 @@ def main():
     out_dir = f"length_analysis_{timestamp}"
     os.makedirs(out_dir, exist_ok=True)
 
+    # サブフォルダ作成
+    subfolders = {
+        "csv": os.path.join(out_dir, "csv"),
+        "plots": os.path.join(out_dir, "plots"),
+        "normalized": os.path.join(out_dir, "normalized_pose"),
+        "raw": os.path.join(out_dir, "raw_pose"),
+    }
+    for path in subfolders.values():
+        os.makedirs(path, exist_ok=True)
+
     # 元CSVの絶対パスを記録
     info_path = os.path.join(out_dir, "info.txt")
     with open(info_path, "w", encoding="utf-8-sig") as f:
         f.write(f"元CSVファイル: {os.path.abspath(csv_file)}\n")
         f.write(f"作成日時: {timestamp}\n")
+        f.write(f"フレーム画像フォルダ: {os.path.abspath(frames_dir)}\n")
 
     total_frames = df[frame_col].nunique()
     summary_list = []
@@ -101,12 +125,12 @@ def main():
         # if median_idx != median_idx_ear:
         #    all_persons_rows.append(median_row_ear)
 
-        # データ保存
+        # データ保存（csvサブフォルダへ）
         save_cols = [frame_col, shoulder_col, ear_dist_col_local]
-        save_file = os.path.join(out_dir, f"length_data_{pid}.csv")
+        save_file = os.path.join(subfolders["csv"], f"length_data_{pid}.csv")
         df_id[save_cols].to_csv(save_file, index=False)
 
-        # 2x2グラフ作成
+        # 2x2グラフ作成（plotsサブフォルダへ）
         fig, axs = plt.subplots(2, 2, figsize=(14, 10))
         fig.suptitle(f"person_id: {pid} の肩幅・両耳間長さの時系列推移と分布", fontname='Hiragino Sans')
 
@@ -139,9 +163,64 @@ def main():
 
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 
-        out_file = os.path.join(out_dir, f"length_plot_{pid}.png")
+        out_file = os.path.join(subfolders["plots"], f"length_plot_{pid}.png")
         plt.savefig(out_file)
         plt.close(fig)
+
+        # --- 代表値フレーム画像への座標可視化（正規化後カラム） ---
+        frame_num = median_row[frame_col]
+        img_candidates = [f for f in os.listdir(frames_dir) if str(frame_num) in f]
+        if img_candidates:
+            img_path = os.path.join(frames_dir, img_candidates[0])
+            from PIL import Image
+            img = Image.open(img_path)
+            plt.figure(figsize=(8,8))
+            plt.imshow(img)
+            # 肩・耳の正規化後座標を描画（色は黒、サイズはさらに小さく、枠線付きで見やすく）
+            # 正規化後は青（枠線も青）、サイズはさらに小さく
+            for x_col, y_col in zip(shoulder_x_cols + ear_x_cols, shoulder_y_cols + ear_y_cols):
+                if x_col in median_row and y_col in median_row:
+                    plt.scatter(
+                        median_row[x_col], median_row[y_col],
+                        color='#FF0033',  # 赤
+                        edgecolors='#FF0033',  # 枠線も赤
+                        s=10,  # さらに小さく
+                        linewidths=1.0,
+                        zorder=3
+                    )
+            plt.title(f'person_id={pid} frame={frame_num} 正規化後座標')
+            out_file_pose = os.path.join(subfolders["normalized"], f'pose_pid{pid}_frame{frame_num}_normalized.png')
+            plt.savefig(out_file_pose)
+            plt.close()
+            print(f"person_id={pid} の代表値座標（正規化後）を {out_file_pose} に保存しました")
+        else:
+            print(f"person_id={pid} frame={frame_num} の画像が見つかりません")
+
+        # --- 代表値フレーム画像への座標可視化（正規化前カラム） ---
+        if 'left_shoulder_x' in median_row and 'right_shoulder_x' in median_row:
+            raw_shoulder_x_cols = ['left_shoulder_x', 'right_shoulder_x']
+            raw_shoulder_y_cols = ['left_shoulder_y', 'right_shoulder_y']
+            raw_ear_x_cols = ['left_ear_x', 'right_ear_x']
+            raw_ear_y_cols = ['left_ear_y', 'right_ear_y']
+            img_path = os.path.join(frames_dir, img_candidates[0])
+            img = Image.open(img_path)
+            plt.figure(figsize=(8,8))
+            plt.imshow(img)
+            for x_col, y_col in zip(raw_shoulder_x_cols + raw_ear_x_cols, raw_shoulder_y_cols + raw_ear_y_cols):
+                if x_col in median_row and y_col in median_row:
+                    plt.scatter(
+                        median_row[x_col], median_row[y_col],
+                        color='#FF0033',  # 赤
+                        edgecolors='#FF0033',  # 枠線も赤
+                        s=10,  # さらに小さく
+                        linewidths=1.0,
+                        zorder=3
+                    )
+            plt.title(f'person_id={pid} frame={frame_num} 正規化前座標')
+            out_file_pose_raw = os.path.join(subfolders["raw"], f'pose_pid{pid}_frame{frame_num}_raw.png')
+            plt.savefig(out_file_pose_raw)
+            plt.close()
+            print(f"person_id={pid} の代表値座標（正規化前）を {out_file_pose_raw} に保存しました")
 
         # summary情報
         summary_list.append({
@@ -151,17 +230,17 @@ def main():
             'percentage': percentage
         })
 
-    # all_persons.csvに中央値該当行を保存
+    # all_persons.csvに中央値該当行を保存（ルート直下）
     if all_persons_rows:
         all_persons_save = os.path.join(out_dir, "all_persons.csv")
         pd.DataFrame(all_persons_rows).to_csv(all_persons_save, index=False)
 
-    # summary csv
+    # summary csv（ルート直下）
     summary_df = pd.DataFrame(summary_list)
     summary_csv = os.path.join(out_dir, "summary.csv")
     summary_df.to_csv(summary_csv, index=False)
     print(f"全person_idの検出割合サマリーを {summary_csv} に保存しました。")
-    print(f"全person_idのデータ・グラフ・csvが {out_dir} に保存されました。")
+    print(f"全person_idのデータ・グラフ・csvが {out_dir} 以下のサブフォルダに保存されました。")
     print(f"元CSVファイル情報は {info_path} に記録されています。")
 
 if __name__ == "__main__":

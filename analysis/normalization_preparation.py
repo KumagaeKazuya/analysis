@@ -40,7 +40,7 @@ def linear_func(distance, a, b, c):
     """
     if distance is None:
         return None
-    return a * distance + b * distance + c
+    return a * distance + b + c  # 修正: bは定数項
 
 def normalize_value_by_linear(value, distance, a, b, c, reference_distance=1):
     """

@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import os
 from datetime import datetime
 import numpy as np
-
 import matplotlib
 matplotlib.rc('font', family='AppleGothic')  # Macの場合
 
@@ -13,6 +12,14 @@ normalized_csv_path = input().strip()
 print("肩幅固定後の代表値CSVファイルパスを入力してください（例: all_persons.csv）:")
 fixed_csv_path = input().strip()
 
+# --- カラム名自動判定 ---
+if "linear" in normalized_csv_path:
+    suffix = "normalized_linear"
+elif "exp" in normalized_csv_path:
+    suffix = "normalized_exp"
+else:
+    suffix = "normalized_exp"  # デフォルト
+
 # --- CSV読み込み ---
 df_norm = pd.read_csv(normalized_csv_path)
 df_fixed = pd.read_csv(fixed_csv_path)
@@ -20,16 +27,16 @@ df_fixed = pd.read_csv(fixed_csv_path)
 # --- 肩幅固定CSVからperson_idごとに肩幅正規化後の肩座標を抽出（代表値フレームのもの） ---
 shoulder_cols = [
     "person_id",
-    "left_shoulder_x_normalized_exp", "left_shoulder_y_normalized_exp",
-    "right_shoulder_x_normalized_exp", "right_shoulder_y_normalized_exp"
+    f"left_shoulder_x_{suffix}", f"left_shoulder_y_{suffix}",
+    f"right_shoulder_x_{suffix}", f"right_shoulder_y_{suffix}"
 ]
 shoulder_fixed = df_fixed[shoulder_cols].drop_duplicates("person_id").set_index("person_id")
 
 # --- 正規化後CSVから両耳座標とframeを抽出 ---
 ear_cols = [
     "person_id", "frame",
-    "left_ear_x_normalized_exp", "left_ear_y_normalized_exp",
-    "right_ear_x_normalized_exp", "right_ear_y_normalized_exp"
+    f"left_ear_x_{suffix}", f"left_ear_y_{suffix}",
+    f"right_ear_x_{suffix}", f"right_ear_y_{suffix}"
 ]
 ears_norm = df_norm[ear_cols]
 
@@ -38,28 +45,21 @@ df = ears_norm.merge(shoulder_fixed, left_on="person_id", right_index=True, how=
 
 # --- なす角計算 ---
 def calc_shoulder_ear_angle(row):
-    # 固定肩座標（肩幅正規化後）
-    lsh_x = row["left_shoulder_x_normalized_exp"]
-    lsh_y = row["left_shoulder_y_normalized_exp"]
-    rsh_x = row["right_shoulder_x_normalized_exp"]
-    rsh_y = row["right_shoulder_y_normalized_exp"]
-    # 時系列ごとの耳座標（正規化後）
-    lea_x = row["left_ear_x_normalized_exp"]
-    lea_y = row["left_ear_y_normalized_exp"]
-    rea_x = row["right_ear_x_normalized_exp"]
-    rea_y = row["right_ear_y_normalized_exp"]
+    lsh_x = row[f"left_shoulder_x_{suffix}"]
+    lsh_y = row[f"left_shoulder_y_{suffix}"]
+    rsh_x = row[f"right_shoulder_x_{suffix}"]
+    rsh_y = row[f"right_shoulder_y_{suffix}"]
+    lea_x = row[f"left_ear_x_{suffix}"]
+    lea_y = row[f"left_ear_y_{suffix}"]
+    rea_x = row[f"right_ear_x_{suffix}"]
+    rea_y = row[f"right_ear_y_{suffix}"]
     try:
-        # 肩中点
         shoulder_cx = (lsh_x + rsh_x) / 2
         shoulder_cy = (lsh_y + rsh_y) / 2
-        # 肩幅固定ベクトル（右肩→左肩）
         shoulder_vec = np.array([lsh_x - rsh_x, lsh_y - rsh_y])
-        # 耳中点
         ear_cx = (lea_x + rea_x) / 2
         ear_cy = (lea_y + rea_y) / 2
-        # 肩中点→耳中点ベクトル
         shoulder_to_ear_vec = np.array([ear_cx - shoulder_cx, ear_cy - shoulder_cy])
-        # なす角
         dot = np.dot(shoulder_vec, shoulder_to_ear_vec)
         norm1 = np.linalg.norm(shoulder_vec)
         norm2 = np.linalg.norm(shoulder_to_ear_vec)
