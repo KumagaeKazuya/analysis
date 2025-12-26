@@ -1,29 +1,28 @@
 import pandas as pd
 import os
+def parse_id_list(input_str):
+    """
+    カンマ区切りのIDリストをintのリストに変換
+    例: "0,2,5" → [0,2,5]
+    """
+    return [int(i.strip()) for i in input_str.split(",") if i.strip()]
 
 def main():
     csv_path = input("対象CSVファイル名を入力してください: ").strip()
     df = pd.read_csv(csv_path)
     df['column_position'] = None
 
-    # 列数の入力
-    num_columns = int(input("何列まで割り当てますか？（例: 3）: ").strip())
-    y_ranges = []
-    for i in range(num_columns):
-        y_min = float(input(f"{i+1}列目のy_min（下端最小値）を入力: ").strip())
-        y_max = float(input(f"{i+1}列目のy_max（下端最大値）を入力: ").strip())
-        y_ranges.append((y_min, y_max))
+    column_ids = {}
+    for col_num in range(1, 4):
+        ids_str = input(f"カメラから{col_num}列目のperson_idをカンマ区切りで入力してください: ").strip()
+        column_ids[col_num] = parse_id_list(ids_str)
 
-    # 各行のバウンディングボックス下端y2で列番号を自動割り当て
     for idx, row in df.iterrows():
-        y2 = row['y2']
-        assigned = False
-        for col_num, (y_min, y_max) in enumerate(y_ranges, start=1):
-            if y_min <= y2 < y_max:
+        id_val = row['person_id']
+        for col_num, id_list in column_ids.items():
+            if id_val in id_list:
                 df.at[idx, 'column_position'] = col_num
-                assigned = True
                 break
-        # 属さない場合はNone（何もしない）
 
     out_path = os.path.join(
         os.path.dirname(csv_path),
