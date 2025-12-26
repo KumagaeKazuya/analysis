@@ -310,7 +310,7 @@ def main():
     monitor_states_json = find_file(base_dir, "json", "json", "monitor_states")
     output_video = os.path.join(base_dir, "video", "output_with_pose.mp4")
     debug_roi_dir = os.path.join(base_dir, "debug_roi")
-    yolo_model = "yolo11x-pose.pt"
+    yolo_model = "yolo11m-pose.pt"
     config = {
         "input_video": input_video,
         "output_video": output_video,

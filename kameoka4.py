@@ -413,7 +413,7 @@ def visualize_result(video_path, monitors, monitors_with_person, monitors_withou
 def main():
     parser = argparse.ArgumentParser(description="自動bbox生成スクリプト（ROI検出・ONモニターのみ）")
     parser.add_argument("--project-dir", type=str, required=True, help="タイムスタンプ付きプロジェクトフォルダ")
-    parser.add_argument("--yolo-model", type=str, default="yolo11x.pt", help="YOLOモデルファイルパス")
+    parser.add_argument("--yolo-model", type=str, default="yolo11m.pt", help="YOLOモデルファイルパス")
     parser.add_argument("--sample-interval-sec", type=int, default=15, help="サンプリング間隔（秒）")
     parser.add_argument("--min-detection-count", type=int, default=1, help="検出最低回数")
     parser.add_argument("--roi-margin", type=float, default=0.25, help="ROIマージン（割合）")
