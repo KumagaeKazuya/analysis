@@ -10,6 +10,10 @@ import argparse
 matplotlib.rcParams['font.family'] = 'Hiragino Sans'
 
 def plot_detection_histogram(df, frame_col, pid, interval, out_dir):
+    """
+    指定person_idの検出数ヒストグラムを作成
+    第3層フィルタリング用の視覚的確認に使用
+    """
     df_pid = df[df['person_id'] == pid].copy()
     if df_pid.empty:
         print(f"person_id={pid}: データなし")
@@ -43,38 +47,6 @@ def plot_detection_histogram(df, frame_col, pid, interval, out_dir):
     plt.savefig(out_path)
     plt.close()
     print(f"person_id={pid} のヒストグラムを {out_path} に保存しました。")
-
-def filter_ids_by_minute_detection(graph_df, frame_col, pid_list, total_frames, frames_per_minute=1200, min_detect=6):
-    """
-    区間は 40-1200, 1240-2400 ... の形。0-39は最初の区間として判定
-    """
-    filtered_ids = []
-    # 区間リスト作成
-    bins = np.arange(40, total_frames + frames_per_minute, frames_per_minute)
-    bins = np.insert(bins, 0, 0)
-    n_full_minutes = len(bins) - 1
-    for pid in pid_list:
-        df_pid = graph_df[graph_df['person_id'] == pid].copy()
-        if df_pid.empty:
-            continue
-        df_pid[frame_col] = df_pid[frame_col].astype(str).str.extract(r'(\d+)')[0]
-        frames = pd.to_numeric(df_pid[frame_col], errors='coerce').dropna().astype(int)
-        if frames.empty:
-            continue
-        ok = True
-        for i in range(n_full_minutes):
-            start = bins[i]
-            end = bins[i+1] - 1
-            # 最後の区間が1200未満なら判定対象外
-            if (end - start + 1) < frames_per_minute:
-                continue
-            count = ((frames >= start) & (frames <= end)).sum()
-            if count < min_detect:
-                ok = False
-                break
-        if ok:
-            filtered_ids.append(pid)
-    return filtered_ids
 
 def main():
     parser = argparse.ArgumentParser()
@@ -157,13 +129,13 @@ def main():
     all_persons_rows = []
     all_graph_rows = []
 
-    # 信頼度閾値
+    # === 第1層フィルタリング: 信頼度閾値 0.5 ===
     conf_threshold = 0.50
 
     for pid in sorted(df[id_col].unique()):
         df_id = df[df[id_col] == pid].copy()
 
-        # --- 信頼度フィルタリング（両肩が閾値以上のみ残す） ---
+        # --- 第1層: 信頼度フィルタリング（両肩が閾値以上のみ残す） ---
         conf_cols = ['left_shoulder_conf', 'right_shoulder_conf']
         if all(col in df_id.columns for col in conf_cols):
             df_id = df_id[
@@ -172,7 +144,7 @@ def main():
             ]
 
         if len(df_id) == 0:
-            print(f"person_id={pid} は信頼度フィルタで全て除外されました。スキップします。")
+            print(f"person_id={pid} は第1層フィルタで全て除外されました。スキップします。")
             continue
 
         # 両耳間距離（正規化後カラムなければユークリッド距離で計算）
@@ -311,54 +283,60 @@ def main():
     print(f"全person_idのデータ・グラフ・csvが {out_dir} 以下のサブフォルダに保存されました。")
     print(f"元CSVファイル情報は {info_path} に記録されています。")
 
-    # --- 追加：グラフ化対象フレームの全データを1つのcsvにまとめて保存 ---
+    # --- グラフ化対象フレームの全データを1つのcsvにまとめて保存 ---
     if all_graph_rows:
         all_graph_df = pd.concat(all_graph_rows, ignore_index=True)
         graph_csv_file = os.path.join(out_dir, "graph_frames_all.csv")
         all_graph_df.to_csv(graph_csv_file, index=False)
-        print(f"グラフ化対象フレームの全データを {graph_csv_file} に保存しました。")
+        print(f"第1層フィルタ通過後の全データを {graph_csv_file} に保存しました。")
     else:
         graph_csv_file = None
 
-    # --- summary.csvから5割以上person_idのみgraph_frames_all.csvからヒストグラムをhistサブフォルダに出力 ---
+    # === 第2層フィルタリング: 50%以上の検出率 ===
+    print("\n" + "="*60)
+    print("第2層フィルタリング: 全体取得数の50%以上")
+    print("="*60)
+    
     summary_df['rate'] = summary_df['frames_with_id'] / summary_df['total_frames']
-    valid_ids = summary_df.loc[summary_df['rate'] >= 0.5, 'person_id'].astype(int).tolist()
-    print(f"5割以上検出person_id: {valid_ids}")
+    valid_ids_layer2 = summary_df.loc[summary_df['rate'] >= 0.5, 'person_id'].astype(int).tolist()
+    excluded_ids_layer2 = summary_df.loc[summary_df['rate'] < 0.5, 'person_id'].astype(int).tolist()
+    
+    print(f"第2層通過ID（50%以上）: {valid_ids_layer2}")
+    print(f"第2層除外ID（50%未満）: {excluded_ids_layer2}")
 
-    # --- 1分(1200フレーム)ごとに6枚以上検出されていないIDを除外 ---
-    valid_ids_minute = []
-    excluded_ids_minute = []
+    # === 第3層フィルタリング用のヒストグラム生成 ===
+    print("\n" + "="*60)
+    print("第3層フィルタリング用ヒストグラム生成")
+    print("="*60)
+    print("※第3層の判定は次節(正規化関数獲得)で手動指定します")
+    
     if graph_csv_file and os.path.exists(graph_csv_file):
         graph_df = pd.read_csv(graph_csv_file)
-        valid_ids_minute = filter_ids_by_minute_detection(
-            graph_df, frame_col=frame_col, pid_list=valid_ids,
-            total_frames=total_frames, frames_per_minute=1200, min_detect=6
-        )
-        excluded_ids_minute = [pid for pid in valid_ids if pid not in valid_ids_minute]
-        print(f"1分(1200フレーム)ごとに6枚以上検出person_id: {valid_ids_minute}")
-        print(f"条件を満たさないperson_id: {excluded_ids_minute}")
-
-        # --- 使えるIDをファイルに保存 ---
-        valid_ids_path = os.path.join(out_dir, "valid_person_ids.txt")
-        with open(valid_ids_path, "w", encoding="utf-8") as f:
-            for pid in valid_ids_minute:
-                f.write(f"{pid}\n")
-        print(f"条件を満たすperson_id一覧を {valid_ids_path} に保存しました。")
-
-        # --- 除外IDもファイルに保存（任意） ---
-        excluded_ids_path = os.path.join(out_dir, "excluded_person_ids.txt")
-        with open(excluded_ids_path, "w", encoding="utf-8") as f:
-            for pid in excluded_ids_minute:
-                f.write(f"{pid}\n")
-        print(f"条件を満たさないperson_id一覧を {excluded_ids_path} に保存しました。")
-
-        for pid in valid_ids_minute:
+        
+        # 第2層通過IDのヒストグラム作成
+        print(f"\nヒストグラム生成対象ID（第2層通過）: {valid_ids_layer2}")
+        for pid in valid_ids_layer2:
             person_hist_dir = os.path.join(subfolders["hist"], f"person_{pid}")
             os.makedirs(person_hist_dir, exist_ok=True)
-            plot_detection_histogram(graph_df, frame_col=frame_col, pid=pid, interval=args.interval, out_dir=person_hist_dir)
-        print(f"graph_frames_all.csvから条件を満たすperson_idのヒストグラムを {subfolders['hist']} 以下に保存しました。")
+            plot_detection_histogram(graph_df, frame_col=frame_col, pid=pid, 
+                                    interval=args.interval, out_dir=person_hist_dir)
+        
+        print(f"\n第2層通過ID {len(valid_ids_layer2)}件 のヒストグラムを {subfolders['hist']} 以下に保存しました。")
+        print("これらのヒストグラムを目視確認し、時間窓で不安定なID（例: 2, 3, 19）を特定してください。")
     else:
         print(f"graph_frames_all.csvが見つからないため、ヒストグラムは出力されません。")
+
+    # === 最終レポート ===
+    print("\n" + "="*60)
+    print("フィルタリング結果サマリー")
+    print("="*60)
+    print(f"第1層（信頼度0.5以上）通過: {len(summary_df)} ID")
+    print(f"第2層（検出率50%以上）通過: {len(valid_ids_layer2)} ID → {valid_ids_layer2}")
+    print(f"第2層除外: {len(excluded_ids_layer2)} ID → {excluded_ids_layer2}")
+    print(f"\n次のステップ:")
+    print(f"  1. {subfolders['hist']} 内のヒストグラムを確認")
+    print(f"  2. 時間窓で検出が不安定なIDを特定")
+    print(f"  3. 正規化関数獲得スクリプトで除外ID指定")
 
 if __name__ == "__main__":
     main()
