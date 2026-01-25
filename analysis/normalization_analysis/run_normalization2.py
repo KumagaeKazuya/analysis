@@ -229,35 +229,74 @@ def fit_hierarchical_regression(df):
     線形混合効果モデルによる階層回帰
     
     モデル式: y_ij = β_0 + β_1 * I(j=2) + u_i + ε_ij
-    - β_0: 列1の母集団平均（固定切片）
-    - β_1: 列2の固定効果
-    - u_i: 人物iのランダム効果
     """
     print("\n" + "=" * 60)
     print("階層回帰モデル構築")
     print("=" * 60)
     
-    # 必要なカラムの確認
     required = ['column_position', 'person_id', 'shoulder_width']
     if not all(col in df.columns for col in required):
         print(f"❌ 必要なカラムが不足: {required}")
         sys.exit(1)
     
-    # 列位置を整数型に
     df['column_position'] = df['column_position'].astype(int)
     
-    # 線形混合効果モデル
     print("\nモデル: shoulder_width ~ C(column_position)")
     print("ランダム効果: person_id")
+    print("推定方法: REML (Restricted Maximum Likelihood)")
     
     model = smf.mixedlm(
         "shoulder_width ~ C(column_position)", 
         df, 
         groups=df["person_id"]
     )
-    result = model.fit()
+    result = model.fit(reml=True)  # REML推定を明示
     
     print("\n" + result.summary().as_text())
+    
+    # 推定結果の詳細を取得
+    model_info = {
+        'converged': result.converged,
+        'iterations': result.method if hasattr(result, 'method') else 'N/A',
+        'loglikelihood': result.llf,
+        'aic': result.aic,
+        'bic': result.bic,
+        
+        # 固定効果
+        'fixed_effects': {
+            'intercept': {
+                'estimate': result.params['Intercept'],
+                'se': result.bse['Intercept'],
+                'tvalue': result.tvalues['Intercept'],
+                'pvalue': result.pvalues['Intercept']
+            }
+        },
+        
+        # 分散成分
+        'random_effects_var': result.cov_re.iloc[0, 0],  # σ_u^2
+        'residual_var': result.scale,  # σ_ε^2
+    }
+    
+    # 列2の効果（存在する場合）
+    col2_key = 'C(column_position)[T.2]'
+    if col2_key in result.params:
+        model_info['fixed_effects']['column2_effect'] = {
+            'estimate': result.params[col2_key],
+            'se': result.bse[col2_key],
+            'tvalue': result.tvalues[col2_key],
+            'pvalue': result.pvalues[col2_key]
+        }
+    
+    # ICC計算
+    var_u = model_info['random_effects_var']
+    var_e = model_info['residual_var']
+    icc = var_u / (var_u + var_e)
+    model_info['icc'] = icc
+    
+    print(f"\n【分散成分】")
+    print(f"  個人間分散 σ_u^2: {var_u:.2f} (SD: {np.sqrt(var_u):.2f})")
+    print(f"  個人内分散 σ_ε^2: {var_e:.2f} (SD: {np.sqrt(var_e):.2f})")
+    print(f"  級内相関係数 ICC: {icc:.3f}")
     
     # 各列の推定値を抽出
     columns = sorted(df['column_position'].unique())
@@ -273,11 +312,11 @@ def fit_hierarchical_regression(df):
         else:
             estimates[col] = intercept
     
-    print(f"\n列ごとの母集団平均推定値:")
+    print(f"\n【列ごとの母集団平均推定値】")
     for col, est in estimates.items():
         print(f"  第{col}列: {est:.2f} px")
     
-    return estimates, result
+    return estimates, result, model_info
 
 
 # ============================================================================
@@ -414,7 +453,17 @@ def main():
     
     # 5. 階層回帰モデル構築（時間窓集約後）
     df_aggregated = aggregate_by_time_window(df)
-    estimates, model_result = fit_hierarchical_regression(df_aggregated)
+    estimates, model_result, model_info = fit_hierarchical_regression(df_aggregated)
+
+    # model_info を保存
+    with open(os.path.join(output_dir, 'model_details.json'), 
+             'w', encoding='utf-8') as f:
+        # NumPy型をPython標準型に変換
+        model_info_serializable = {
+            k: (float(v) if isinstance(v, (np.integer, np.floating)) else v)
+            for k, v in model_info.items()
+        }
+        json.dump(model_info_serializable, f, indent=2, ensure_ascii=False)
     
     # 6. 直線近似・パラメータ保存
     params, fig = fit_normalization_function(estimates)
