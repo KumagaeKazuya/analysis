@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 階層回帰モデルによる正規化関数獲得と評価
@@ -92,6 +93,65 @@ def calculate_individual_cv(df, id_col='person_id', shoulder_col='shoulder_width
         })
     
     return pd.DataFrame(cv_results)
+
+
+def print_individual_statistics(df, column_col='column_position', 
+                                shoulder_col='shoulder_width', label=""):
+    """
+    個人別統計量と列平均を表示
+    論文の表5.5, 表5.6に対応
+    """
+    print(f"\n{'='*60}")
+    print(f"個人別統計量{label}")
+    print(f"{'='*60}")
+    
+    # 個人別統計
+    cv_df = calculate_individual_cv(df, shoulder_col=shoulder_col)
+    
+    # 列情報を追加
+    person_cols = df.groupby('person_id')[column_col].first().to_dict()
+    cv_df['column'] = cv_df['person_id'].map(person_cols)
+    
+    # 列順にソート
+    cv_df = cv_df.sort_values(['column', 'person_id'])
+    
+    print("\nID別統計:")
+    for _, row in cv_df.iterrows():
+        print(f"  ID {int(row['person_id']):2d} (列{row['column']:.0f}): "
+              f"平均={row['mean']:6.1f} px, SD={row['std']:5.1f} px, "
+              f"CV={row['cv_within']:5.1f}%, N={row['count']:4.0f}")
+    
+    # 列ごとの平均値を計算
+    print("\n列ごとの平均:")
+    for col in sorted(df[column_col].unique()):
+        df_col = df[df[column_col] == col]
+        
+        # この列に属する各個人の平均値を計算
+        person_means = []
+        person_stds = []
+        person_cvs = []
+        total_count = 0
+        
+        for pid in df_col['person_id'].unique():
+            df_pid = df_col[df_col['person_id'] == pid]
+            mean_val = df_pid[shoulder_col].mean()
+            std_val = df_pid[shoulder_col].std()
+            cv_val = (std_val / mean_val * 100) if mean_val > 0 else 0
+            
+            person_means.append(mean_val)
+            person_stds.append(std_val)
+            person_cvs.append(cv_val)
+            total_count += len(df_pid)
+        
+        # 個人平均の平均
+        col_mean = np.mean(person_means)
+        col_std = np.mean(person_stds)
+        col_cv = np.mean(person_cvs)
+        
+        print(f"  第{col:.0f}列: 平均={col_mean:6.1f} px, SD={col_std:5.1f} px, "
+              f"CV={col_cv:5.1f}%, N={total_count:4d}")
+    
+    return cv_df
 
 
 # ============================================================================
@@ -370,8 +430,8 @@ def apply_normalization(df, params):
     """
     正規化関数を全データに適用
     
-    論文の記述: 「各データの観測肩幅を、列位置から算出した期待肩幅で除算」
-    normalized = original / f(column_position)
+    方法: 第1列を基準として、全データを第1列相当の値に変換
+    normalized = original * (expected_col1 / expected_current_col)
     """
     print("\n" + "=" * 60)
     print("全データへの正規化適用")
@@ -380,14 +440,18 @@ def apply_normalization(df, params):
     df_norm = df.copy()
     a, b = params['a'], params['b']
     
+    # 第1列の期待値を基準値として設定
+    expected_col1 = a * 1 + b
+    print(f"基準値（第1列期待値）: {expected_col1:.2f} px")
+    
     def normalize_width(row):
         col_pos = row['column_position']
         original = row['shoulder_width']
         expected = a * col_pos + b
         
-        # 期待値で除算（論文の記述通り）
+        # 第1列相当の値に変換
         if expected > 0:
-            return original / expected
+            return original * (expected_col1 / expected)
         else:
             return original
     
@@ -440,13 +504,10 @@ def main():
     print("正規化前の評価指標")
     print("=" * 60)
     
-    # 個人内変動係数
-    cv_df = calculate_individual_cv(df)
-    cv_df.to_csv(os.path.join(output_dir, 'cv_within_before.csv'), 
-                index=False, encoding='utf-8-sig')
-    
-    print("\n個人別統計量:")
-    print(cv_df.to_string(index=False))
+    # 個人内変動係数と詳細統計
+    cv_df_before = print_individual_statistics(df, label="（正規化前）")
+    cv_df_before.to_csv(os.path.join(output_dir, 'cv_within_before.csv'), 
+                        index=False, encoding='utf-8-sig')
     
     # 課題1評価指標
     task1_before, person_stats = calculate_task1_metrics(df)
@@ -488,19 +549,20 @@ def main():
     print("正規化後の評価指標")
     print("=" * 60)
     
+    # 正規化後の詳細統計
+    cv_df_after = print_individual_statistics(
+        df_normalized,
+        shoulder_col='shoulder_width_normalized',
+        label="（正規化後）"
+    )
+    cv_df_after.to_csv(os.path.join(output_dir, 'cv_within_after.csv'),
+                      index=False, encoding='utf-8-sig')
+    
     # 正規化後の課題1評価
     task1_after, _ = calculate_task1_metrics(
         df_normalized, 
         shoulder_col='shoulder_width_normalized'
     )
-    
-    # 正規化後の個人内変動係数
-    cv_df_after = calculate_individual_cv(
-        df_normalized, 
-        shoulder_col='shoulder_width_normalized'
-    )
-    cv_df_after.to_csv(os.path.join(output_dir, 'cv_within_after.csv'),
-                      index=False, encoding='utf-8-sig')
     
     # 9. レポート生成・保存
     print("\n" + "=" * 60)
